@@ -1,7 +1,16 @@
 import geopandas as gpd
 from shapely.geometry import Polygon
 
-from urbancanopy.cities import build_comparison_zones
+from urbancanopy.cities import (
+    CITY_FIXTURES,
+    build_comparison_zones,
+    get_city_fixture_path,
+)
+
+
+def test_city_registry_exposes_supported_fixture_paths() -> None:
+    assert set(CITY_FIXTURES) == {"taipei", "tokyo", "london", "new_york"}
+    assert get_city_fixture_path("taipei").name == "taipei.geojson"
 
 
 def test_build_comparison_zones_returns_core_and_outer_ring() -> None:

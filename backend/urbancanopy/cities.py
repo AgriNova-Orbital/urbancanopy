@@ -1,5 +1,26 @@
+from pathlib import Path
+from typing import Final
+
 import geopandas as gpd
 import pandas as pd
+
+
+CITY_FIXTURES: Final[dict[str, str]] = {
+    "taipei": "taipei.geojson",
+    "tokyo": "tokyo.geojson",
+    "london": "london.geojson",
+    "new_york": "new_york.geojson",
+}
+
+
+def get_city_fixture_path(city: str) -> Path:
+    return (
+        Path(__file__).resolve().parent.parent
+        / "tests"
+        / "fixtures"
+        / "cities"
+        / CITY_FIXTURES[city]
+    )
 
 
 def build_comparison_zones(
