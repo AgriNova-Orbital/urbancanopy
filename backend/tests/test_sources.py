@@ -93,16 +93,46 @@ def test_adapters_expose_offline_safe_load_contract() -> None:
 
     with pytest.raises(
         LiveAccessNotImplementedError,
-        match="Live catalog access is not implemented for source 'sentinel2'",
+        match="Live catalog access is not implemented for source 'sentinel3'",
     ):
-        clients["sentinel2"].load()
+        clients["sentinel3"].load()
 
-    with pytest.raises(
-        LiveAccessNotImplementedError,
-        match="Live catalog access is not implemented for source 'landsat'",
-    ):
-        clients["landsat"].load()
+
+def test_live_catalog_clients_load_dataarray_when_implemented(monkeypatch) -> None:
+    import xarray as xr
+    from urbancanopy.sources import CopernicusStacClient, OpenDataCubeClient
+
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        }
+    )
+
+    monkeypatch.setattr(
+        "pystac_client.Client.open", lambda *args, **kwargs: "mock_catalog"
+    )
+    monkeypatch.setattr(
+        CopernicusStacClient,
+        "_search_items",
+        lambda self, *args, **kwargs: ["mock_item"],
+    )
+    monkeypatch.setattr(
+        OpenDataCubeClient, "_search_items", lambda self, *args, **kwargs: ["mock_item"]
+    )
+    monkeypatch.setattr(
+        "odc.stac.load", lambda *args, **kwargs: xr.DataArray([1], dims=["x"])
+    )
+
+    result_s2 = clients["sentinel2"].load(bbox=(121.5, 25.0, 121.6, 25.1))
+    assert isinstance(result_s2, xr.DataArray)
+
+    result_landsat = clients["landsat"].load(bbox=(121.5, 25.0, 121.6, 25.1))
+    assert isinstance(result_landsat, xr.DataArray)
 
 
 def test_catalog_client_load_contract_allows_future_data_return_values() -> None:
-    assert signature(CatalogClient.load).return_annotation is object
+    import xarray as xr
+
+    assert signature(CatalogClient.load).return_annotation is xr.DataArray
