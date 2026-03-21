@@ -14,6 +14,9 @@ CITY_FIXTURES: Final[dict[str, str]] = {
 
 
 def get_city_fixture_path(city: str) -> Path:
+    if city not in CITY_FIXTURES:
+        raise ValueError(f"Unsupported city: {city}")
+
     return (
         Path(__file__).resolve().parent.parent
         / "tests"
@@ -30,18 +33,33 @@ def build_comparison_zones(
     outer_km: int,
     exclude_core_to_km: int,
 ) -> gpd.GeoDataFrame:
-    core = city_gdf.copy()
+    source_crs = city_gdf.crs
+    working_gdf = city_gdf
+
+    if source_crs is not None and source_crs.is_geographic:
+        projected_crs = city_gdf.estimate_utm_crs()
+        if projected_crs is not None:
+            working_gdf = city_gdf.to_crs(projected_crs)
+
+    core = working_gdf.copy()
+    if inner_km > 0:
+        core.geometry = working_gdf.buffer(inner_km * 1000)
     core["zone"] = "urban_core"
 
-    outer = city_gdf.copy()
-    outer.geometry = city_gdf.buffer(outer_km * 1000).difference(
-        city_gdf.buffer(exclude_core_to_km * 1000)
+    outer = working_gdf.copy()
+    outer.geometry = working_gdf.buffer(outer_km * 1000).difference(
+        working_gdf.buffer(exclude_core_to_km * 1000)
     )
     outer["zone"] = "outer_ring"
 
-    return gpd.GeoDataFrame(
+    zones = gpd.GeoDataFrame(
         pd.concat(
             [core[["zone", "geometry"]], outer[["zone", "geometry"]]], ignore_index=True
         ),
-        crs=city_gdf.crs,
+        crs=working_gdf.crs,
     )
+
+    if source_crs is not None and zones.crs != source_crs:
+        return zones.to_crs(source_crs)
+
+    return zones
