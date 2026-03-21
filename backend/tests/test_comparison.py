@@ -125,3 +125,24 @@ def test_build_modeling_ready_city_metrics_requires_metrics_for_each_heat_gap_ci
 
     with pytest.raises(ValueError, match="missing city metrics for cities: tokyo"):
         build_modeling_ready_city_metrics(heat_gap_summary, city_surface_context)
+
+
+def test_build_modeling_ready_city_metrics_rejects_null_aggregated_city_metrics() -> (
+    None
+):
+    heat_gap_summary = pd.DataFrame(
+        {
+            "city": ["taipei", "tokyo"],
+            "heat_gap_c": [2.8, 1.5],
+        }
+    )
+    city_surface_context = pd.DataFrame(
+        {
+            "city": ["taipei", "tokyo"],
+            "mean_ndvi": [0.3, pd.NA],
+            "mean_ndbi": [0.6, 0.2],
+        }
+    )
+
+    with pytest.raises(ValueError, match="missing city metrics for cities: tokyo"):
+        build_modeling_ready_city_metrics(heat_gap_summary, city_surface_context)

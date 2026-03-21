@@ -76,7 +76,12 @@ def build_modeling_ready_city_metrics(
         indicator=True,
     )
 
-    missing_cities = merged.loc[merged["_merge"] == "left_only", "city"]
+    metrics_missing_mask = (
+        (merged["_merge"] == "left_only")
+        | merged["mean_ndvi"].isna()
+        | merged["mean_ndbi"].isna()
+    )
+    missing_cities = merged.loc[metrics_missing_mask, "city"]
     if not missing_cities.empty:
         cities = ", ".join(str(city) for city in missing_cities)
         raise ValueError(f"missing city metrics for cities: {cities}")
