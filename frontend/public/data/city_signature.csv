@@ -1,0 +1,5 @@
+city,heat_gap_c,mean_ndvi,mean_ndbi,signature_score
+taipei,2.8,0.22,0.76,0.85
+tokyo,1.9,0.31,0.61,0.62
+london,1.2,0.45,0.48,0.41
+new_york,2.1,0.25,0.68,0.71

@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "priority_score": 0.9 },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[121.5, 25.03], [121.51, 25.03], [121.51, 25.04], [121.5, 25.04], [121.5, 25.03]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "priority_score": 0.4 },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[121.52, 25.05], [121.53, 25.05], [121.53, 25.06], [121.52, 25.06], [121.52, 25.05]]]
+      }
+    }
+  ]
+}

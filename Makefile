@@ -3,7 +3,7 @@
 # Generates the artifacts directly into the frontend's public folder
 data:
 	mkdir -p frontend/public/data
-	uv run --directory backend python -m urbancanopy.cli --config backend/configs/multicity-demo.yml --output-dir ../frontend/public/data
+	cd backend && uv run python -m urbancanopy.cli --config configs/multicity-demo.yml --output-dir ../frontend/public/data
 
 # Installs frontend dependencies and starts the Next.js dev server
 dev:
