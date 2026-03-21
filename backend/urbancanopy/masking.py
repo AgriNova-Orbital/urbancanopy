@@ -2,7 +2,7 @@ import xarray as xr
 
 
 def apply_binary_mask(data: xr.DataArray, valid_mask: xr.DataArray) -> xr.DataArray:
-    return data.where(valid_mask.astype(bool))
+    return data.where(valid_mask.fillna(0).astype(bool))
 
 
 def seasonal_median(data: xr.DataArray) -> xr.DataArray:
