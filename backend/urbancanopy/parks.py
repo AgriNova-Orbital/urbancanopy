@@ -1,5 +1,10 @@
+import zlib
+
 import numpy as np
 import pandas as pd
+
+
+SUMMARY_COLUMNS = ["park_id", "delta_lst_c", "ci_low_c", "ci_high_c"]
 
 
 def pci_summary(
@@ -14,7 +19,9 @@ def pci_summary(
         msg = "n_boot must be greater than 0"
         raise ValueError(msg)
 
-    rng = np.random.default_rng(seed)
+    if samples.empty:
+        return pd.DataFrame(columns=SUMMARY_COLUMNS)
+
     summaries: list[dict[str, float | str]] = []
 
     for park_id, park_samples in samples.groupby("park_id", sort=True):
@@ -33,6 +40,8 @@ def pci_summary(
             raise ValueError(msg)
 
         delta = float(np.median(ring) - np.median(park))
+        park_seed = (int(seed) + zlib.crc32(str(park_id).encode("utf-8"))) % (2**32)
+        rng = np.random.default_rng(park_seed)
         boot = []
         for _ in range(n_boot):
             boot.append(
@@ -50,4 +59,4 @@ def pci_summary(
             }
         )
 
-    return pd.DataFrame(summaries)
+    return pd.DataFrame(summaries, columns=SUMMARY_COLUMNS)
