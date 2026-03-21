@@ -14,6 +14,11 @@ CatalogProvider = Literal["copernicus", "opendatacube"]
 SUPPORTED_CITIES = set(CITY_FIXTURES)
 REQUIRED_CATALOGS = {"sentinel2", "sentinel3", "landsat"}
 SUPPORTED_CATALOG_PROVIDERS = {"copernicus", "opendatacube"}
+REQUIRED_CATALOG_PROVIDERS = {
+    "sentinel2": "copernicus",
+    "sentinel3": "copernicus",
+    "landsat": "opendatacube",
+}
 REQUIRED_WEIGHTS = {"lst", "green", "built"}
 
 
@@ -106,6 +111,12 @@ def validate_run_config(
         provider not in SUPPORTED_CATALOG_PROVIDERS for provider in catalogs.values()
     ):
         raise ValueError("catalogs must use only supported providers")
+
+    if any(
+        catalogs[source] != provider
+        for source, provider in REQUIRED_CATALOG_PROVIDERS.items()
+    ):
+        raise ValueError("catalogs must map each source to its required provider")
 
     if set(summer_window) != {"start_date", "end_date"}:
         raise ValueError("summer_window must contain start_date and end_date")

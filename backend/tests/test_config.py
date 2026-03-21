@@ -91,6 +91,14 @@ def test_load_run_config_normalizes_summer_window_dates_to_strings(
         ),
         pytest.param(
             VALID_CONFIG.replace(
+                "sentinel2: copernicus",
+                "sentinel2: opendatacube",
+            ),
+            "catalogs must map each source to its required provider",
+            id="invalid-source-provider-pairing",
+        ),
+        pytest.param(
+            VALID_CONFIG.replace(
                 "summer_window:\n  start_date: 2025-06-01\n  end_date: 2025-08-31",
                 "summer_window:\n  start_date: 2025-08-31\n  end_date: 2025-06-01",
             ),
