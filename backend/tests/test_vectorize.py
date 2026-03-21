@@ -19,3 +19,12 @@ def test_vectorize_priority_cells_filters_small_polygons_by_area() -> None:
     zones = vectorize_priority_cells(score, threshold=0.5, min_area=2.0)
 
     assert zones.empty
+
+
+def test_vectorize_priority_cells_skips_nan_score_cells() -> None:
+    score = xr.DataArray(np.array([[np.nan, 0.9]]), dims=("y", "x"))
+
+    zones = vectorize_priority_cells(score, threshold=0.5)
+
+    assert len(zones) == 1
+    assert set(zones["priority_score"].round(1)) == {0.9}

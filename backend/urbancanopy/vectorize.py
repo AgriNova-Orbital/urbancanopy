@@ -1,3 +1,5 @@
+import math
+
 import geopandas as gpd
 import xarray as xr
 from shapely.geometry import box
@@ -11,6 +13,8 @@ def vectorize_priority_cells(
     for y_index in range(score.sizes["y"]):
         for x_index in range(score.sizes["x"]):
             value = float(score.values[y_index, x_index])
+            if math.isnan(value):
+                continue
             if value < threshold:
                 continue
 
