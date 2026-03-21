@@ -1,0 +1,5 @@
+.worktrees/
+.DS_Store
+__pycache__/
+.pytest_cache/
+node_modules/
