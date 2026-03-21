@@ -13,6 +13,7 @@ CatalogProvider = Literal["copernicus", "opendatacube"]
 
 SUPPORTED_CITIES = set(CITY_FIXTURES)
 REQUIRED_CATALOGS = {"sentinel2", "sentinel3", "landsat"}
+SUPPORTED_CATALOG_PROVIDERS = {"copernicus", "opendatacube"}
 REQUIRED_WEIGHTS = {"lst", "green", "built"}
 
 
@@ -101,6 +102,11 @@ def validate_run_config(
             "catalogs must contain exactly sentinel2, sentinel3, and landsat"
         )
 
+    if any(
+        provider not in SUPPORTED_CATALOG_PROVIDERS for provider in catalogs.values()
+    ):
+        raise ValueError("catalogs must use only supported providers")
+
     if set(summer_window) != {"start_date", "end_date"}:
         raise ValueError("summer_window must contain start_date and end_date")
 
@@ -114,6 +120,9 @@ def validate_run_config(
 
     if set(weights) != REQUIRED_WEIGHTS:
         raise ValueError("weights must contain exactly lst, green, and built")
+
+    if any(weight < 0.0 or weight > 1.0 for weight in weights.values()):
+        raise ValueError("weights values must be between 0.0 and 1.0")
 
     if not isclose(sum(weights.values()), 1.0, abs_tol=1e-9):
         raise ValueError("weights must sum to 1.0")

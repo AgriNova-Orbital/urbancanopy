@@ -83,6 +83,14 @@ def test_load_run_config_normalizes_summer_window_dates_to_strings(
         ),
         pytest.param(
             VALID_CONFIG.replace(
+                "landsat: opendatacube",
+                "landsat: unsupported_provider",
+            ),
+            "catalogs must use only supported providers",
+            id="unsupported-catalog-provider",
+        ),
+        pytest.param(
+            VALID_CONFIG.replace(
                 "summer_window:\n  start_date: 2025-06-01\n  end_date: 2025-08-31",
                 "summer_window:\n  start_date: 2025-08-31\n  end_date: 2025-06-01",
             ),
@@ -101,6 +109,14 @@ def test_load_run_config_normalizes_summer_window_dates_to_strings(
             ),
             "weights must sum to 1.0",
             id="weights-do-not-sum-to-one",
+        ),
+        pytest.param(
+            VALID_CONFIG.replace(
+                "weights:\n  lst: 0.5\n  green: 0.3\n  built: 0.2",
+                "weights:\n  lst: 0.5\n  green: 0.7\n  built: -0.2",
+            ),
+            "weights values must be between 0.0 and 1.0",
+            id="negative-weight-value",
         ),
         pytest.param(
             VALID_CONFIG.replace(
