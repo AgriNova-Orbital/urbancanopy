@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "city": "new_york"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-74.05, 40.68],
+            [-73.90, 40.68],
+            [-73.90, 40.82],
+            [-74.05, 40.82],
+            [-74.05, 40.68]
+          ]
+        ]
+      }
+    }
+  ]
+}

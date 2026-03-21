@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "city": "tokyo"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [139.67, 35.62],
+            [139.81, 35.62],
+            [139.81, 35.76],
+            [139.67, 35.76],
+            [139.67, 35.62]
+          ]
+        ]
+      }
+    }
+  ]
+}

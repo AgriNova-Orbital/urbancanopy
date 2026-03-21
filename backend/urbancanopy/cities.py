@@ -13,17 +13,17 @@ CITY_FIXTURES: Final[dict[str, str]] = {
 }
 
 
-def get_city_fixture_path(city: str) -> Path:
+def get_city_fixture_path(city: str, *, base_path: str | Path | None = None) -> Path:
     if city not in CITY_FIXTURES:
         raise ValueError(f"Unsupported city: {city}")
 
-    return (
-        Path(__file__).resolve().parent.parent
-        / "tests"
-        / "fixtures"
-        / "cities"
-        / CITY_FIXTURES[city]
+    city_base_path = (
+        Path(base_path)
+        if base_path is not None
+        else (Path(__file__).resolve().parent.parent / "data" / "inputs" / "cities")
     )
+
+    return city_base_path / CITY_FIXTURES[city]
 
 
 def build_comparison_zones(

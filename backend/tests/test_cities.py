@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import geopandas as gpd
 from shapely.geometry import Polygon
 
@@ -11,6 +13,24 @@ from urbancanopy.cities import (
 def test_city_registry_exposes_supported_fixture_paths() -> None:
     assert set(CITY_FIXTURES) == {"taipei", "tokyo", "london", "new_york"}
     assert get_city_fixture_path("taipei").name == "taipei.geojson"
+
+
+def test_get_city_fixture_path_defaults_to_runtime_city_data() -> None:
+    path = get_city_fixture_path("taipei")
+
+    assert path == (
+        Path(__file__).resolve().parent.parent
+        / "data"
+        / "inputs"
+        / "cities"
+        / "taipei.geojson"
+    )
+
+
+def test_get_city_fixture_path_supports_base_path_override() -> None:
+    path = get_city_fixture_path("tokyo", base_path="/tmp/custom-cities")
+
+    assert str(path) == "/tmp/custom-cities/tokyo.geojson"
 
 
 def test_get_city_fixture_path_rejects_unsupported_city() -> None:

@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "city": "taipei"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [121.48, 25.01],
+            [121.58, 25.01],
+            [121.58, 25.09],
+            [121.48, 25.09],
+            [121.48, 25.01]
+          ]
+        ]
+      }
+    }
+  ]
+}
