@@ -18,10 +18,12 @@ def test_city_registry_exposes_supported_fixture_paths() -> None:
 def test_get_city_fixture_path_defaults_to_runtime_city_data() -> None:
     path = get_city_fixture_path("taipei")
 
+    assert path.name == "taipei.geojson"
+    assert path.is_file()
     assert path == (
         Path(__file__).resolve().parent.parent
+        / "urbancanopy"
         / "data"
-        / "inputs"
         / "cities"
         / "taipei.geojson"
     )

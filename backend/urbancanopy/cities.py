@@ -1,3 +1,4 @@
+from importlib.resources import files
 from pathlib import Path
 from typing import Final
 
@@ -17,11 +18,10 @@ def get_city_fixture_path(city: str, *, base_path: str | Path | None = None) -> 
     if city not in CITY_FIXTURES:
         raise ValueError(f"Unsupported city: {city}")
 
-    city_base_path = (
-        Path(base_path)
-        if base_path is not None
-        else (Path(__file__).resolve().parent.parent / "data" / "inputs" / "cities")
-    )
+    if base_path is not None:
+        city_base_path = Path(base_path)
+    else:
+        city_base_path = Path(str(files("urbancanopy.data.cities")))
 
     return city_base_path / CITY_FIXTURES[city]
 
