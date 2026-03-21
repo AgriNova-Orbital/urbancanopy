@@ -17,7 +17,7 @@ class CatalogClient:
     def name(self) -> str:
         return self.provider
 
-    def load(self, *_args: object, **_kwargs: object) -> None:
+    def load(self, *_args: object, **_kwargs: object) -> object:
         raise LiveAccessNotImplementedError(self.source_key)
 
 

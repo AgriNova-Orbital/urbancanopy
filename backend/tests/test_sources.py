@@ -1,4 +1,7 @@
+from inspect import signature
+
 from urbancanopy.sources import (
+    CatalogClient,
     CopernicusStacClient,
     LiveAccessNotImplementedError,
     OpenDataCubeClient,
@@ -99,3 +102,7 @@ def test_adapters_expose_offline_safe_load_contract() -> None:
         match="Live catalog access is not implemented for source 'landsat'",
     ):
         clients["landsat"].load()
+
+
+def test_catalog_client_load_contract_allows_future_data_return_values() -> None:
+    assert signature(CatalogClient.load).return_annotation is object
