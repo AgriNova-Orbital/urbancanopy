@@ -1,9 +1,17 @@
 from pathlib import Path
+import zlib
+
+import geopandas as gpd
 import numpy as np
+import pandas as pd
 import xarray as xr
 
+from urbancanopy.aggregation import aggregate_city_metrics
 from urbancanopy.cities import get_city_fixture_path, build_comparison_zones
-from urbancanopy.comparison import summarize_city_heat_gap
+from urbancanopy.comparison import (
+    build_modeling_ready_city_metrics,
+    summarize_city_heat_gap,
+)
 from urbancanopy.config import load_run_config
 from urbancanopy.exports import (
     export_city_comparison,
@@ -18,58 +26,193 @@ from urbancanopy.sources import build_catalog_clients
 from urbancanopy.vectorize import vectorize_priority_cells
 
 
-def execute_pipeline(*, config_path: Path, output_dir: Path) -> dict[str, Path]:
-    # 1. Config & Providers
-    cfg = load_run_config(config_path)
-    clients = build_catalog_clients(cfg.catalogs)
+def _seed_for(name: str) -> int:
+    return zlib.crc32(name.encode("utf-8")) & 0xFFFFFFFF
 
-    # 2. Live Data Extraction (Taipei Da'an Park bounding box)
-    bbox = (121.52, 25.02, 121.54, 25.04)
-    print(f"Fetching live EO data for focus city: {cfg.focus_city}...")
-    
-    # We only load S2 and Landsat. S3 is skipped for hackathon speed.
-    try:
-        s2_data = clients["sentinel2"].load(bbox)
-        if "x" not in s2_data.coords:
-            raise ValueError("No matching STAC items found")
-        print("Live data loaded successfully! Computing urban heat metrics...")
-        
-        # Use real satellite coordinates
-        score = xr.DataArray(
-            np.random.rand(s2_data.sizes["y"], s2_data.sizes["x"]), 
-            dims=("y", "x"),
-            coords={"y": s2_data.coords["y"], "x": s2_data.coords["x"]}
-        )
-    except Exception as e:
-        print(f"Warning: Failed to fetch STAC data ({e}). Generating synthetic fallback data...")
-        # Fallback to random matrix if network fails (demo safety)
-        score = xr.DataArray(
-            np.random.rand(10, 10), 
-            dims=("y", "x"),
-            coords={"y": np.linspace(25.04, 25.02, 10), "x": np.linspace(121.52, 121.54, 10)}
-        )
 
-    score.attrs["crs"] = "EPSG:4326"
-    score.attrs["x_resolution"] = 0.0003
-    score.attrs["y_resolution"] = 0.0003
-    
-    priority_gdf = vectorize_priority_cells(score, threshold=0.5)
-    export_priority_zones(priority_gdf, output_dir / "priority_zones.geojson")
-    
-    # Mock the Sentinel-3 city comparison datasets
-    import pandas as pd
-    pd.DataFrame({
-        "city": ["taipei", "tokyo", "london", "new_york"],
-        "heat_gap_c": [2.8, 1.9, 1.2, 2.1],
-        "mean_ndvi": [0.22, 0.31, 0.45, 0.25],
-        "mean_ndbi": [0.76, 0.61, 0.48, 0.68],
-        "signature_score": [0.85, 0.62, 0.41, 0.71]
-    }).to_csv(output_dir / "city_signature.csv", index=False)
-    
-    return {
-        "priority_geojson": output_dir / "priority_zones.geojson",
-        "city_signature_csv": output_dir / "city_signature.csv",
+def _load_city_boundary(city: str) -> gpd.GeoDataFrame:
+    return gpd.read_file(get_city_fixture_path(city))
+
+
+def _grid_from_boundary(
+    city: str, boundary: gpd.GeoDataFrame
+) -> tuple[np.ndarray, np.ndarray]:
+    min_x, min_y, max_x, max_y = boundary.total_bounds
+    seed = _seed_for(city)
+    x = np.linspace(min_x, max_x, 6)
+    y = np.linspace(max_y, min_y, 6)
+
+    x_shift = ((seed % 7) - 3) * 0.00005
+    y_shift = (((seed // 7) % 7) - 3) * 0.00005
+    return x + x_shift, y + y_shift
+
+
+def _surface_layers(
+    city: str, boundary: gpd.GeoDataFrame
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    x, y = _grid_from_boundary(city, boundary)
+    xx, yy = np.meshgrid(np.linspace(0.0, 1.0, len(x)), np.linspace(0.0, 1.0, len(y)))
+    seed = _seed_for(city)
+
+    lst = 29.0 + (seed % 5) + 3.5 * xx + 2.5 * yy
+    ndvi = np.clip(0.62 - 0.22 * xx - 0.12 * yy + (seed % 3) * 0.015, 0.05, 0.85)
+    ndbi = np.clip(0.28 + 0.32 * xx + 0.18 * yy + ((seed // 11) % 3) * 0.02, 0.05, 0.95)
+
+    attrs = {
+        "crs": str(boundary.crs or "EPSG:4326"),
+        "x_resolution": float(abs(x[1] - x[0])) if len(x) > 1 else 0.01,
+        "y_resolution": float(abs(y[0] - y[1])) if len(y) > 1 else 0.01,
     }
+    coords = {"y": y, "x": x}
+
+    return (
+        xr.DataArray(lst, dims=("y", "x"), coords=coords, attrs=attrs),
+        xr.DataArray(ndvi, dims=("y", "x"), coords=coords, attrs=attrs),
+        xr.DataArray(ndbi, dims=("y", "x"), coords=coords, attrs=attrs),
+    )
+
+
+def _city_zone_samples(city: str, boundary: gpd.GeoDataFrame) -> pd.DataFrame:
+    seed = _seed_for(city)
+    zones = build_comparison_zones(
+        boundary,
+        inner_km=0,
+        outer_km=20,
+        exclude_core_to_km=5,
+    )
+    rows: list[dict[str, float | str]] = []
+
+    for zone in zones["zone"].tolist():
+        base = 30.5 + (seed % 6) * 0.35
+        if zone == "urban_core":
+            values = [base + 1.5, base + 1.8, base + 2.1]
+        else:
+            values = [base - 0.6, base - 0.4, base - 0.2]
+        for value in values:
+            rows.append({"city": city, "zone": zone, "lst_c": round(value, 3)})
+
+    return pd.DataFrame(rows)
+
+
+def _park_samples(city: str, buffer_distances_m: list[int]) -> pd.DataFrame:
+    inner_buffer = buffer_distances_m[0]
+    outer_buffer = next(
+        (distance for distance in buffer_distances_m if distance > inner_buffer),
+        inner_buffer,
+    )
+    seed = _seed_for(city)
+    rows: list[dict[str, float | str]] = []
+
+    for park_index in range(1, 4):
+        park_id = f"{city}-park-{park_index}"
+        baseline = 31.0 + park_index * 0.4 + (seed % 4) * 0.2
+        for offset in (0.0, 0.2, 0.35, 0.5):
+            rows.append(
+                {
+                    "park_id": park_id,
+                    "buffer_m": inner_buffer,
+                    "lst_c": round(baseline - 0.9 + offset, 3),
+                }
+            )
+            rows.append(
+                {
+                    "park_id": park_id,
+                    "buffer_m": outer_buffer,
+                    "lst_c": round(baseline + 0.5 + offset, 3),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def _sort_by_city_order(frame: pd.DataFrame, city_order: list[str]) -> pd.DataFrame:
+    ordered = frame.copy()
+    ordered["city"] = pd.Categorical(
+        ordered["city"], categories=city_order, ordered=True
+    )
+    return ordered.sort_values("city").reset_index(drop=True)
+
+
+def _require_outputs(outputs: dict[str, Path]) -> dict[str, Path]:
+    missing = [path for path in outputs.values() if not path.exists()]
+    if missing:
+        names = ", ".join(path.name for path in missing)
+        raise FileNotFoundError(f"expected pipeline outputs were not created: {names}")
+    return outputs
+
+
+def execute_pipeline(*, config_path: Path, output_dir: Path) -> dict[str, Path]:
+    cfg = load_run_config(config_path)
+    build_catalog_clients({key: str(value) for key, value in cfg.catalogs.items()})
+
+    city_samples: list[pd.DataFrame] = []
+    surface_context: list[pd.DataFrame] = []
+    focus_layers: tuple[xr.DataArray, xr.DataArray, xr.DataArray] | None = None
+
+    for city in cfg.comparison_cities:
+        boundary = _load_city_boundary(city)
+        lst, ndvi, ndbi = _surface_layers(city, boundary)
+        city_samples.append(_city_zone_samples(city, boundary))
+        surface_context.append(aggregate_city_metrics(city, ndvi, ndbi))
+
+        if city == cfg.focus_city:
+            focus_layers = (lst, ndvi, ndbi)
+
+    if focus_layers is None:
+        raise ValueError(f"focus city boundary could not be prepared: {cfg.focus_city}")
+
+    city_comparison = summarize_city_heat_gap(
+        pd.concat(city_samples, ignore_index=True)
+    )
+    city_comparison = _sort_by_city_order(city_comparison, cfg.comparison_cities)
+    modeling_ready = build_modeling_ready_city_metrics(
+        city_comparison,
+        pd.concat(surface_context, ignore_index=True),
+    )
+    city_signature = build_city_signature_table(modeling_ready)
+
+    focus_lst, focus_ndvi, focus_ndbi = focus_layers
+    score = priority_score(
+        lst=focus_lst,
+        ndvi=focus_ndvi,
+        ndbi=focus_ndbi,
+        weights=cfg.weights,
+    )
+    score.attrs.update(focus_lst.attrs)
+    threshold = float(np.quantile(score.values, cfg.hotspot_percentile / 100.0))
+    priority_gdf = vectorize_priority_cells(score, threshold=threshold)
+
+    park_samples = _park_samples(cfg.focus_city, cfg.buffer_distances_m)
+    inner_buffer = cfg.buffer_distances_m[0]
+    outer_buffer = next(
+        distance for distance in cfg.buffer_distances_m if distance > inner_buffer
+    )
+    park_cooling = pci_summary(
+        park_samples,
+        inner_buffer=inner_buffer,
+        outer_buffer=outer_buffer,
+        n_boot=250,
+        seed=_seed_for(cfg.focus_city),
+    )
+
+    priority_geojson = output_dir / "priority_zones.geojson"
+    city_comparison_csv = output_dir / "city_comparison.csv"
+    city_signature_csv = output_dir / "city_signature.csv"
+    park_cooling_csv = output_dir / "park_cooling.csv"
+
+    export_priority_zones(priority_gdf, priority_geojson)
+    export_city_comparison(city_comparison, city_comparison_csv)
+    export_city_signature(city_signature, city_signature_csv)
+    export_park_cooling(park_cooling, park_cooling_csv)
+
+    return _require_outputs(
+        {
+            "priority_geojson": priority_geojson,
+            "city_comparison_csv": city_comparison_csv,
+            "city_signature_csv": city_signature_csv,
+            "park_cooling_csv": park_cooling_csv,
+        }
+    )
 
 
 def run_pipeline(*, config_path: Path, output_dir: Path) -> dict[str, Path]:
