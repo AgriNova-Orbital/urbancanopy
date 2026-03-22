@@ -1,6 +1,7 @@
 "use client";
 
 import { createFrontendLogger, type FrontendLogger as FrontendLoggerClient } from "../lib/logger";
+import { createWindowErrorEventGuard } from "../lib/runtime-error-dedupe";
 
 let runtimeLogger: FrontendLoggerClient | null = null;
 let frontendLoggerInstalled = false;
@@ -82,6 +83,7 @@ export function ensureFrontendLoggerInstalled(): void {
   const originalConsoleError = console.error.bind(console);
   const originalConsoleWarn = console.warn.bind(console);
   const previousWindowOnError = window.onerror;
+  const windowErrorEventGuard = createWindowErrorEventGuard();
 
   console.error = (...args: unknown[]) => {
     originalConsoleError(...args);
@@ -120,6 +122,10 @@ export function ensureFrontendLoggerInstalled(): void {
   };
 
   const handleErrorEvent = (event: ErrorEvent) => {
+    if (!windowErrorEventGuard.shouldReport(event)) {
+      return;
+    }
+
     handleWindowError(event.message || "window error", event.filename, event.lineno, event.colno, event.error);
   };
 

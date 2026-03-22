@@ -1,5 +1,6 @@
 import { createFrontendLogger } from "../lib/logger";
 import { createLogStore } from "../lib/log-store";
+import { createWindowErrorEventGuard } from "../lib/runtime-error-dedupe.mjs";
 
 function assert(condition, message) {
   if (!condition) {
@@ -106,8 +107,38 @@ async function testLogStoreDropsOldestEntriesWhenQueueCapIsReached() {
   assert(queuedEvents[1].event === "ui.warn.third", "expected newest event to be retained");
 }
 
+async function testWindowErrorDeduperSkipsDuplicateScriptErrors() {
+  const deduper = createWindowErrorEventGuard();
+
+  const scriptErrorEvent = {
+    message: "boom",
+    filename: "app.js",
+    lineno: 12,
+    colno: 4,
+    error: new Error("boom"),
+  };
+
+  const resourceErrorEvent = {
+    message: undefined,
+    filename: undefined,
+    lineno: undefined,
+    colno: undefined,
+    error: undefined,
+  };
+
+  assert(
+    deduper.shouldReport(scriptErrorEvent) === false,
+    "expected script errors to be skipped by the event listener path",
+  );
+  assert(
+    deduper.shouldReport(resourceErrorEvent) === true,
+    "expected non-script error events to remain reportable",
+  );
+}
+
 await testOfflineTransportQueuesEvent();
 await testDefaultLoggerRetainsQueueWithoutBackend();
 await testSuccessfulSyncClearsQueueAndUpdatesStatus();
 await testConcurrentLogsDoNotDuplicateTransportPayloads();
 await testLogStoreDropsOldestEntriesWhenQueueCapIsReached();
+await testWindowErrorDeduperSkipsDuplicateScriptErrors();
