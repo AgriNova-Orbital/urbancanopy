@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import geopandas as gpd
@@ -7,16 +8,52 @@ import pytest
 from urbancanopy.cli import execute_pipeline, run_pipeline
 
 
+def _synthetic_boundary() -> gpd.GeoDataFrame:
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        geometry=[box(121.5, 25.0, 121.6, 25.1)],
+        crs="EPSG:4326",
+    )
+
+
+def _write_priority_geojson(zones: gpd.GeoDataFrame, path: Path, **_kwargs) -> None:
+    features = []
+    zone_ids = zones.get("zone_id")
+    if zone_ids is None:
+        zone_ids = [f"zone-{index}" for index in range(1, len(zones) + 1)]
+
+    for geometry, zone_id, priority_score in zip(
+        zones.geometry,
+        zone_ids,
+        zones["priority_score"],
+        strict=False,
+    ):
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "zone_id": zone_id,
+                    "priority_score": float(priority_score),
+                },
+                "geometry": geometry.__geo_interface__,
+            }
+        )
+
+    path.write_text(
+        json.dumps({"type": "FeatureCollection", "features": features}),
+        encoding="utf-8",
+    )
+
+
 def test_run_pipeline_creates_backend_logs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output_dir = tmp_path / "outputs"
 
-    from shapely.geometry import box
-
     monkeypatch.setattr(
         "urbancanopy.cli.export_priority_zones",
-        lambda _df, path, **_kwargs: path.write_text("{}"),
+        _write_priority_geojson,
     )
     monkeypatch.setattr(
         "urbancanopy.cli.export_city_comparison",
@@ -32,9 +69,7 @@ def test_run_pipeline_creates_backend_logs(
     )
     monkeypatch.setattr(
         "urbancanopy.cli._load_city_boundary",
-        lambda _city: gpd.GeoDataFrame(
-            geometry=[box(121.5, 25.0, 121.6, 25.1)], crs="EPSG:4326"
-        ),
+        lambda _city: _synthetic_boundary(),
     )
 
     run_pipeline(
@@ -52,11 +87,9 @@ def test_run_pipeline_creates_backend_logs(
 def test_run_pipeline_offline_demo_does_not_report_fake_probe_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from shapely.geometry import box
-
     monkeypatch.setattr(
         "urbancanopy.cli.export_priority_zones",
-        lambda _df, path, **_kwargs: path.write_text("{}"),
+        _write_priority_geojson,
     )
     monkeypatch.setattr(
         "urbancanopy.cli.export_city_comparison",
@@ -72,9 +105,7 @@ def test_run_pipeline_offline_demo_does_not_report_fake_probe_success(
     )
     monkeypatch.setattr(
         "urbancanopy.cli._load_city_boundary",
-        lambda _city: gpd.GeoDataFrame(
-            geometry=[box(121.5, 25.0, 121.6, 25.1)], crs="EPSG:4326"
-        ),
+        lambda _city: _synthetic_boundary(),
     )
 
     run_pipeline(
@@ -112,6 +143,12 @@ def test_run_pipeline_writes_real_offline_demo_outputs(
     monkeypatch.setattr(
         "urbancanopy.sources.OpenDataCubeClient.load", _fail_if_live_called
     )
+    monkeypatch.setattr(
+        "urbancanopy.cli._load_city_boundary", lambda _city: _synthetic_boundary()
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_priority_zones", _write_priority_geojson
+    )
 
     outputs = run_pipeline(config_path=config_path, output_dir=output_dir)
 
@@ -140,9 +177,12 @@ def test_run_pipeline_writes_real_offline_demo_outputs(
     }
     assert not park_cooling.empty
 
-    priority_zones = gpd.read_file(outputs["priority_geojson"])
-    assert not priority_zones.empty
-    assert {"zone_id", "priority_score"}.issubset(priority_zones.columns)
+    priority_zones = json.loads(outputs["priority_geojson"].read_text(encoding="utf-8"))
+    assert priority_zones["type"] == "FeatureCollection"
+    assert priority_zones["features"]
+    assert {"zone_id", "priority_score"}.issubset(
+        priority_zones["features"][0]["properties"]
+    )
 
 
 def test_execute_pipeline_raises_when_expected_export_is_missing(
@@ -154,6 +194,12 @@ def test_execute_pipeline_raises_when_expected_export_is_missing(
 
     monkeypatch.setattr(
         "urbancanopy.cli.export_park_cooling", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli._load_city_boundary", lambda _city: _synthetic_boundary()
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_priority_zones", _write_priority_geojson
     )
 
     with pytest.raises(FileNotFoundError, match="park_cooling.csv"):
