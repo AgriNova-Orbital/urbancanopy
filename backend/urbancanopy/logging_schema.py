@@ -25,5 +25,5 @@ def build_event(
         "mode": mode,
         "online": online,
         "fallbackUsed": fallback_used,
-        "meta": meta or {},
+        "meta": dict(meta) if meta is not None else {},
     }

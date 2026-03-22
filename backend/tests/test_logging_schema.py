@@ -20,3 +20,19 @@ def test_build_event_creates_structured_event_envelope() -> None:
     assert event["fallbackUsed"] is False
     assert event["meta"]["focus_city"] == "taipei"
     assert "ts" in event
+
+
+def test_build_event_snapshots_meta_dict() -> None:
+    meta = {"focus_city": "taipei"}
+
+    event = build_event(
+        level="info",
+        event="pipeline.started",
+        component="cli",
+        message="pipeline starting",
+        meta=meta,
+    )
+
+    meta["focus_city"] = "seoul"
+
+    assert event["meta"]["focus_city"] == "taipei"
