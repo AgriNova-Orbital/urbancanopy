@@ -7,6 +7,21 @@ import pytest
 from urbancanopy.cli import execute_pipeline, run_pipeline
 
 
+def test_run_pipeline_creates_backend_logs(tmp_path: Path) -> None:
+    output_dir = tmp_path / "outputs"
+
+    run_pipeline(
+        config_path=Path("configs/multicity-demo.yml"),
+        output_dir=output_dir,
+        log_dir=tmp_path,
+        log_timestamp="2026-03-22_12-45-00",
+    )
+
+    assert (tmp_path / "2026-03-22_12-45-00_back.log").exists()
+    assert (tmp_path / "2026-03-22_12-45-00_back_debug.log").exists()
+    assert (tmp_path / "2026-03-22_12-45-00_back_error.log").exists()
+
+
 def test_run_pipeline_writes_real_offline_demo_outputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

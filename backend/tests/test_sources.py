@@ -1,5 +1,9 @@
 from inspect import signature
+from pathlib import Path
 
+import pytest
+
+from urbancanopy.logger import UrbancanopyLogger
 from urbancanopy.sources import (
     CatalogClient,
     CopernicusStacClient,
@@ -7,8 +11,6 @@ from urbancanopy.sources import (
     OpenDataCubeClient,
     build_catalog_clients,
 )
-
-import pytest
 
 
 def test_build_catalog_clients_uses_copernicus_for_sentinel_and_odc_for_landsat() -> (
@@ -130,6 +132,28 @@ def test_live_catalog_clients_load_dataarray_when_implemented(monkeypatch) -> No
 
     result_landsat = clients["landsat"].load(bbox=(121.5, 25.0, 121.6, 25.1))
     assert isinstance(result_landsat, xr.DataArray)
+
+
+def test_build_catalog_clients_logs_probe_failures(tmp_path: Path) -> None:
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp="2026-03-22_12-46-00",
+    )
+
+    with pytest.raises(ValueError, match="Missing required source keys: sentinel3"):
+        build_catalog_clients(
+            {
+                "sentinel2": "copernicus",
+                "landsat": "opendatacube",
+            },
+            logger=logger,
+            run_id="run-1",
+            mode="offline_demo",
+        )
+
+    recent = logger.store.list_recent_events(limit=1)
+    assert recent[0]["event"] == "dataset.probe.failed"
+    assert recent[0]["meta"]["missing_keys"] == ["sentinel3"]
 
 
 def test_catalog_client_load_contract_allows_future_data_return_values() -> None:

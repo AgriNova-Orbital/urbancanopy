@@ -20,7 +20,29 @@ def _ensure_zone_ids(zones: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return zones.assign(zone_id=[f"zone-{index}" for index in range(1, len(zones) + 1)])
 
 
-def export_priority_zones(zones: gpd.GeoDataFrame, path: Path | str) -> None:
+def _log_artifact(
+    logger, *, artifact: str, path: Path | str, run_id: str | None, mode: str
+) -> None:
+    if logger is None:
+        return
+    logger.info(
+        event="artifact.generated",
+        component="exports",
+        message=f"generated {artifact}",
+        run_id=run_id,
+        mode=mode,
+        meta={"artifact": artifact, "path": path},
+    )
+
+
+def export_priority_zones(
+    zones: gpd.GeoDataFrame,
+    path: Path | str,
+    *,
+    logger=None,
+    run_id: str | None = None,
+    mode: str = "offline",
+) -> None:
     _validate_columns(zones, {"geometry", "priority_score"}, "priority_zones.geojson")
 
     if zones.crs is None:
@@ -33,26 +55,75 @@ def export_priority_zones(zones: gpd.GeoDataFrame, path: Path | str) -> None:
         export_gdf = export_gdf.to_crs("EPSG:4326")
 
     export_gdf.to_file(path, driver="GeoJSON")
+    _log_artifact(
+        logger,
+        artifact="priority_zones.geojson",
+        path=path,
+        run_id=run_id,
+        mode=mode,
+    )
 
 
-def export_city_comparison(df: pd.DataFrame, path: Path | str) -> None:
+def export_city_comparison(
+    df: pd.DataFrame,
+    path: Path | str,
+    *,
+    logger=None,
+    run_id: str | None = None,
+    mode: str = "offline",
+) -> None:
     _validate_columns(df, {"city", "heat_gap_c"}, "city_comparison.csv")
     df.to_csv(path, index=False)
+    _log_artifact(
+        logger,
+        artifact="city_comparison.csv",
+        path=path,
+        run_id=run_id,
+        mode=mode,
+    )
 
 
-def export_city_signature(df: pd.DataFrame, path: Path | str) -> None:
+def export_city_signature(
+    df: pd.DataFrame,
+    path: Path | str,
+    *,
+    logger=None,
+    run_id: str | None = None,
+    mode: str = "offline",
+) -> None:
     _validate_columns(
         df,
         {"city", "heat_gap_c", "mean_ndvi", "mean_ndbi", "signature_score"},
         "city_signature.csv",
     )
     df.to_csv(path, index=False)
+    _log_artifact(
+        logger,
+        artifact="city_signature.csv",
+        path=path,
+        run_id=run_id,
+        mode=mode,
+    )
 
 
-def export_park_cooling(df: pd.DataFrame, path: Path | str) -> None:
+def export_park_cooling(
+    df: pd.DataFrame,
+    path: Path | str,
+    *,
+    logger=None,
+    run_id: str | None = None,
+    mode: str = "offline",
+) -> None:
     _validate_columns(
         df,
         {"park_id", "delta_lst_c", "ci_low_c", "ci_high_c"},
         "park_cooling.csv",
     )
     df.to_csv(path, index=False)
+    _log_artifact(
+        logger,
+        artifact="park_cooling.csv",
+        path=path,
+        run_id=run_id,
+        mode=mode,
+    )

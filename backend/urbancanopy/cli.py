@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 import zlib
 
 import geopandas as gpd
@@ -19,6 +20,7 @@ from urbancanopy.exports import (
     export_park_cooling,
     export_priority_zones,
 )
+from urbancanopy.logger import UrbancanopyLogger
 from urbancanopy.modeling import build_city_signature_table
 from urbancanopy.parks import pci_summary
 from urbancanopy.scoring import priority_score
@@ -141,83 +143,202 @@ def _require_outputs(outputs: dict[str, Path]) -> dict[str, Path]:
     return outputs
 
 
-def execute_pipeline(*, config_path: Path, output_dir: Path) -> dict[str, Path]:
-    cfg = load_run_config(config_path)
-    build_catalog_clients({key: str(value) for key, value in cfg.catalogs.items()})
-
-    city_samples: list[pd.DataFrame] = []
-    surface_context: list[pd.DataFrame] = []
-    focus_layers: tuple[xr.DataArray, xr.DataArray, xr.DataArray] | None = None
-
-    for city in cfg.comparison_cities:
-        boundary = _load_city_boundary(city)
-        lst, ndvi, ndbi = _surface_layers(city, boundary)
-        city_samples.append(_city_zone_samples(city, boundary))
-        surface_context.append(aggregate_city_metrics(city, ndvi, ndbi))
-
-        if city == cfg.focus_city:
-            focus_layers = (lst, ndvi, ndbi)
-
-    if focus_layers is None:
-        raise ValueError(f"focus city boundary could not be prepared: {cfg.focus_city}")
-
-    city_comparison = summarize_city_heat_gap(
-        pd.concat(city_samples, ignore_index=True)
-    )
-    city_comparison = _sort_by_city_order(city_comparison, cfg.comparison_cities)
-    modeling_ready = build_modeling_ready_city_metrics(
-        city_comparison,
-        pd.concat(surface_context, ignore_index=True),
-    )
-    city_signature = build_city_signature_table(modeling_ready)
-
-    focus_lst, focus_ndvi, focus_ndbi = focus_layers
-    score = priority_score(
-        lst=focus_lst,
-        ndvi=focus_ndvi,
-        ndbi=focus_ndbi,
-        weights=cfg.weights,
-    )
-    score.attrs.update(focus_lst.attrs)
-    threshold = float(np.quantile(score.values, cfg.hotspot_percentile / 100.0))
-    priority_gdf = vectorize_priority_cells(score, threshold=threshold)
-
-    park_samples = _park_samples(cfg.focus_city, cfg.buffer_distances_m)
-    inner_buffer = cfg.buffer_distances_m[0]
-    outer_buffer = next(
-        distance for distance in cfg.buffer_distances_m if distance > inner_buffer
-    )
-    park_cooling = pci_summary(
-        park_samples,
-        inner_buffer=inner_buffer,
-        outer_buffer=outer_buffer,
-        n_boot=250,
-        seed=_seed_for(cfg.focus_city),
-    )
-
-    priority_geojson = output_dir / "priority_zones.geojson"
-    city_comparison_csv = output_dir / "city_comparison.csv"
-    city_signature_csv = output_dir / "city_signature.csv"
-    park_cooling_csv = output_dir / "park_cooling.csv"
-
-    export_priority_zones(priority_gdf, priority_geojson)
-    export_city_comparison(city_comparison, city_comparison_csv)
-    export_city_signature(city_signature, city_signature_csv)
-    export_park_cooling(park_cooling, park_cooling_csv)
-
-    return _require_outputs(
-        {
-            "priority_geojson": priority_geojson,
-            "city_comparison_csv": city_comparison_csv,
-            "city_signature_csv": city_signature_csv,
-            "park_cooling_csv": park_cooling_csv,
-        }
-    )
+def _mode_for_config(config_path: Path, config_name: str | None = None) -> str:
+    marker = config_name or config_path.stem
+    if "demo" in marker:
+        return "offline_demo"
+    return "offline"
 
 
-def run_pipeline(*, config_path: Path, output_dir: Path) -> dict[str, Path]:
+def _build_run_id(log_timestamp: str | None) -> str:
+    if log_timestamp is not None:
+        return log_timestamp
+    return f"run-{uuid4().hex[:12]}"
+
+
+def execute_pipeline(
+    *,
+    config_path: Path,
+    output_dir: Path,
+    log_dir: Path | None = None,
+    log_timestamp: str | None = None,
+) -> dict[str, Path]:
+    logger = UrbancanopyLogger.create(base_dir=log_dir, timestamp=log_timestamp)
+    run_id = _build_run_id(log_timestamp)
+    mode = _mode_for_config(config_path)
+
+    try:
+        cfg = load_run_config(config_path)
+        mode = _mode_for_config(config_path, cfg.name)
+        logger.info(
+            event="mode.changed",
+            component="cli",
+            message=f"pipeline mode set to {mode}",
+            run_id=run_id,
+            mode=mode,
+            fallback_used=mode == "offline_demo",
+            meta={"config_path": config_path, "output_dir": output_dir},
+        )
+        logger.info(
+            event="pipeline.started",
+            component="cli",
+            message="pipeline starting",
+            run_id=run_id,
+            mode=mode,
+            fallback_used=mode == "offline_demo",
+            meta={"config_path": config_path, "output_dir": output_dir},
+        )
+        build_catalog_clients(
+            {key: str(value) for key, value in cfg.catalogs.items()},
+            logger=logger,
+            run_id=run_id,
+            mode=mode,
+        )
+
+        city_samples: list[pd.DataFrame] = []
+        surface_context: list[pd.DataFrame] = []
+        focus_layers: tuple[xr.DataArray, xr.DataArray, xr.DataArray] | None = None
+
+        for city in cfg.comparison_cities:
+            boundary = _load_city_boundary(city)
+            lst, ndvi, ndbi = _surface_layers(city, boundary)
+            logger.warning(
+                event="fallback.activated",
+                component="cli",
+                message="using offline demo surface layers",
+                run_id=run_id,
+                mode=mode,
+                fallback_used=True,
+                meta={"city": city},
+            )
+            city_samples.append(_city_zone_samples(city, boundary))
+            surface_context.append(aggregate_city_metrics(city, ndvi, ndbi))
+
+            if city == cfg.focus_city:
+                focus_layers = (lst, ndvi, ndbi)
+
+        if focus_layers is None:
+            raise ValueError(
+                f"focus city boundary could not be prepared: {cfg.focus_city}"
+            )
+
+        city_comparison = summarize_city_heat_gap(
+            pd.concat(city_samples, ignore_index=True)
+        )
+        city_comparison = _sort_by_city_order(city_comparison, cfg.comparison_cities)
+        modeling_ready = build_modeling_ready_city_metrics(
+            city_comparison,
+            pd.concat(surface_context, ignore_index=True),
+        )
+        city_signature = build_city_signature_table(modeling_ready)
+
+        focus_lst, focus_ndvi, focus_ndbi = focus_layers
+        score = priority_score(
+            lst=focus_lst,
+            ndvi=focus_ndvi,
+            ndbi=focus_ndbi,
+            weights=cfg.weights,
+        )
+        score.attrs.update(focus_lst.attrs)
+        threshold = float(np.quantile(score.values, cfg.hotspot_percentile / 100.0))
+        priority_gdf = vectorize_priority_cells(score, threshold=threshold)
+
+        park_samples = _park_samples(cfg.focus_city, cfg.buffer_distances_m)
+        inner_buffer = cfg.buffer_distances_m[0]
+        outer_buffer = next(
+            distance for distance in cfg.buffer_distances_m if distance > inner_buffer
+        )
+        park_cooling = pci_summary(
+            park_samples,
+            inner_buffer=inner_buffer,
+            outer_buffer=outer_buffer,
+            n_boot=250,
+            seed=_seed_for(cfg.focus_city),
+        )
+
+        priority_geojson = output_dir / "priority_zones.geojson"
+        city_comparison_csv = output_dir / "city_comparison.csv"
+        city_signature_csv = output_dir / "city_signature.csv"
+        park_cooling_csv = output_dir / "park_cooling.csv"
+
+        export_priority_zones(
+            priority_gdf,
+            priority_geojson,
+            logger=logger,
+            run_id=run_id,
+            mode=mode,
+        )
+        export_city_comparison(
+            city_comparison,
+            city_comparison_csv,
+            logger=logger,
+            run_id=run_id,
+            mode=mode,
+        )
+        export_city_signature(
+            city_signature,
+            city_signature_csv,
+            logger=logger,
+            run_id=run_id,
+            mode=mode,
+        )
+        export_park_cooling(
+            park_cooling,
+            park_cooling_csv,
+            logger=logger,
+            run_id=run_id,
+            mode=mode,
+        )
+
+        outputs = _require_outputs(
+            {
+                "priority_geojson": priority_geojson,
+                "city_comparison_csv": city_comparison_csv,
+                "city_signature_csv": city_signature_csv,
+                "park_cooling_csv": park_cooling_csv,
+            }
+        )
+        logger.info(
+            event="pipeline.completed",
+            component="cli",
+            message="pipeline completed",
+            run_id=run_id,
+            mode=mode,
+            fallback_used=mode == "offline_demo",
+            meta={"outputs": outputs},
+        )
+        return outputs
+    except Exception as exc:
+        logger.error(
+            event="pipeline.failed",
+            component="cli",
+            message="pipeline failed",
+            run_id=run_id,
+            mode=mode,
+            fallback_used=mode == "offline_demo",
+            meta={
+                "error": str(exc),
+                "config_path": config_path,
+                "output_dir": output_dir,
+            },
+        )
+        raise
+
+
+def run_pipeline(
+    *,
+    config_path: Path,
+    output_dir: Path,
+    log_dir: Path | None = None,
+    log_timestamp: str | None = None,
+) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    return execute_pipeline(config_path=config_path, output_dir=output_dir)
+    return execute_pipeline(
+        config_path=config_path,
+        output_dir=output_dir,
+        log_dir=log_dir,
+        log_timestamp=log_timestamp,
+    )
 
 
 def main() -> None:
@@ -231,9 +352,7 @@ def main() -> None:
 
     try:
         run_pipeline(config_path=args.config, output_dir=args.output_dir)
-        print("Pipeline completed successfully.")
-    except Exception as e:
-        print(f"Pipeline error: {e}")
+    except Exception:
         sys.exit(1)
 
 
