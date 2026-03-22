@@ -112,7 +112,7 @@ def test_offline_pipeline_smoke_creates_root_logs_event_db_and_status_state(
         debug_log = log_paths[1].read_text(encoding="utf-8")
         error_log = log_paths[2].read_text(encoding="utf-8")
         assert "pipeline.completed" in info_log
-        assert "dataset.probe.failed" in error_log
+        assert "dataset.probe.skipped" in error_log
         assert "fallback.activated" in debug_log
 
         store = EventStore(log_paths[3])

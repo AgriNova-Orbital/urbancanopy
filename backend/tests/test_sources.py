@@ -100,7 +100,7 @@ def test_adapters_expose_offline_safe_load_contract() -> None:
         clients["sentinel3"].load()
 
 
-def test_live_catalog_clients_load_dataarray_when_implemented(monkeypatch) -> None:
+def test_live_catalog_clients_load_dataset_when_implemented(monkeypatch) -> None:
     import xarray as xr
     from urbancanopy.sources import CopernicusStacClient, OpenDataCubeClient
 
@@ -124,14 +124,38 @@ def test_live_catalog_clients_load_dataarray_when_implemented(monkeypatch) -> No
         OpenDataCubeClient, "_search_items", lambda self, *args, **kwargs: ["mock_item"]
     )
     monkeypatch.setattr(
-        "odc.stac.load", lambda *args, **kwargs: xr.DataArray([1], dims=["x"])
+        "odc.stac.load", lambda *args, **kwargs: xr.Dataset({"band": ("x", [1])})
     )
 
     result_s2 = clients["sentinel2"].load(bbox=(121.5, 25.0, 121.6, 25.1))
-    assert isinstance(result_s2, xr.DataArray)
+    assert isinstance(result_s2, xr.Dataset)
 
     result_landsat = clients["landsat"].load(bbox=(121.5, 25.0, 121.6, 25.1))
-    assert isinstance(result_landsat, xr.DataArray)
+    assert isinstance(result_landsat, xr.Dataset)
+
+
+@pytest.mark.parametrize("source_key", ["sentinel2", "landsat"])
+def test_live_catalog_clients_return_empty_dataset_when_no_items(
+    monkeypatch: pytest.MonkeyPatch,
+    source_key: str,
+) -> None:
+    import xarray as xr
+
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        }
+    )
+
+    client = clients[source_key]
+    monkeypatch.setattr(type(client), "_search_items", lambda self, bbox: [])
+
+    result = client.load(bbox=(121.5, 25.0, 121.6, 25.1))
+
+    assert isinstance(result, xr.Dataset)
+    assert not result.data_vars
 
 
 def test_build_catalog_clients_logs_probe_failures(tmp_path: Path) -> None:
@@ -179,7 +203,205 @@ def test_build_catalog_clients_does_not_log_probe_success_for_configuration_only
     assert [event["event"] for event in events].count("dataset.probe.succeeded") == 0
 
 
+@pytest.mark.parametrize(
+    ("source_key", "client_type"),
+    [
+        ("sentinel2", CopernicusStacClient),
+        ("landsat", OpenDataCubeClient),
+    ],
+)
+def test_live_probe_exceptions_log_live_failure_without_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    source_key: str,
+    client_type: type[CatalogClient],
+) -> None:
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp=f"2026-03-22_14-0{1 if source_key == 'sentinel2' else 2}-00",
+    )
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        }
+    )
+
+    monkeypatch.setattr(
+        client_type,
+        "_search_items",
+        lambda self, bbox: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        clients[source_key].load(
+            bbox=(121.5, 25.0, 121.6, 25.1),
+            logger=logger,
+            run_id="run-1",
+            mode="live_probe",
+        )
+
+    event = logger.store.list_recent_events(limit=1)[0]
+    assert event["event"] == "dataset.probe.failed"
+    assert event["fallbackUsed"] is False
+    assert event["meta"]["status"] == "live_failure"
+
+
+def test_sentinel3_reports_fallback_only_probe_status(tmp_path: Path) -> None:
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp="2026-03-22_14-03-00",
+    )
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        },
+        logger=logger,
+        run_id="run-1",
+        mode="live_probe",
+    )
+
+    with pytest.raises(LiveAccessNotImplementedError):
+        clients["sentinel3"].load(
+            logger=logger,
+            run_id="run-1",
+            mode="live_probe",
+        )
+
+    event = logger.store.list_recent_events(limit=1)[0]
+    assert event["event"] == "dataset.probe.failed"
+    assert event["fallbackUsed"] is False
+    assert event["meta"]["datasource"] == "copernicus"
+    assert event["meta"]["capability"] == "fallback_only"
+    assert event["meta"]["actual_transport"] == "not_implemented"
+    assert event["meta"]["status"] == "live_failure"
+
+
+@pytest.mark.parametrize("source_key", ["sentinel2", "landsat"])
+def test_live_probe_no_items_logs_non_fallback_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    source_key: str,
+) -> None:
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp=f"2026-03-22_14-0{5 if source_key == 'sentinel2' else 6}-00",
+    )
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        }
+    )
+
+    client = clients[source_key]
+    monkeypatch.setattr(type(client), "_search_items", lambda self, bbox: [])
+
+    result = client.load(
+        bbox=(121.5, 25.0, 121.6, 25.1),
+        logger=logger,
+        run_id="run-1",
+        mode="live_probe",
+    )
+
+    event = logger.store.list_recent_events(limit=1)[0]
+    assert not result.data_vars
+    assert event["event"] == "dataset.probe.failed"
+    assert event["fallbackUsed"] is False
+    assert event["meta"]["status"] == "live_failure"
+
+
+def test_sentinel2_probe_reports_working_now_transport_and_capability(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import xarray as xr
+
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp="2026-03-22_14-03-30",
+    )
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        }
+    )
+
+    monkeypatch.setattr(
+        CopernicusStacClient, "_search_items", lambda self, bbox: ["mock-item"]
+    )
+    monkeypatch.setattr(
+        "odc.stac.load", lambda *args, **kwargs: xr.DataArray([1], dims=["x"])
+    )
+
+    result = clients["sentinel2"].load(
+        (121.5, 25.0, 121.6, 25.1),
+        logger=logger,
+        run_id="run-1",
+        mode="live_probe",
+    )
+
+    assert isinstance(result, xr.Dataset)
+    assert not isinstance(result, xr.DataArray)
+    assert list(result.data_vars) == ["data"]
+
+    event = logger.store.list_recent_events(limit=1)[0]
+    assert event["event"] == "dataset.probe.succeeded"
+    assert event["meta"]["datasource"] == "copernicus"
+    assert event["meta"]["capability"] == "working_now"
+    assert event["meta"]["actual_transport"] == "planetary_computer_stac"
+
+
+def test_landsat_probe_reports_honest_transport_and_capability(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import xarray as xr
+
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp="2026-03-22_14-04-00",
+    )
+    clients = build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        }
+    )
+
+    monkeypatch.setattr(
+        OpenDataCubeClient, "_search_items", lambda self, bbox: ["mock-item"]
+    )
+    monkeypatch.setattr(
+        "odc.stac.load", lambda *args, **kwargs: xr.DataArray([1], dims=["x"])
+    )
+
+    result = clients["landsat"].load(
+        (121.5, 25.0, 121.6, 25.1),
+        logger=logger,
+        run_id="run-1",
+        mode="live_probe",
+    )
+
+    assert isinstance(result, xr.Dataset)
+    assert not isinstance(result, xr.DataArray)
+    assert list(result.data_vars) == ["data"]
+
+    event = logger.store.list_recent_events(limit=1)[0]
+    assert event["event"] == "dataset.probe.succeeded"
+    assert event["meta"]["datasource"] == "opendatacube"
+    assert event["meta"]["capability"] == "needs_fix"
+    assert event["meta"]["actual_transport"] == "planetary_computer_stac"
+
+
 def test_catalog_client_load_contract_allows_future_data_return_values() -> None:
     import xarray as xr
 
-    assert signature(CatalogClient.load).return_annotation is xr.DataArray
+    assert signature(CatalogClient.load).return_annotation is xr.Dataset

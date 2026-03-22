@@ -1,68 +1,82 @@
 # Urban Canopy Methodology
 
-This document tracks the technical execution of the multicity cooling pipeline.
+This document tracks the current, checked-in runtime behavior for the multicity cooling pipeline.
 
-## Running the Pipeline
+## Datasource Contract vs Runtime Truth
 
-Today, the checked-in multicity demo path is intentionally offline-first: it validates configuration, CLI wiring, and demo execution without requiring live remote data access.
+The backend/frontend datasource contract stays stable even when the live transport is incomplete.
 
-The default offline pipeline check is:
+- Stable datasource labels: `copernicus` and `opendatacube`
+- These labels are the contract exposed in probe metadata as `datasource`
+- Actual runtime transport is reported separately as `actual_transport`
+
+Current source truth:
+
+- sentinel2: datasource `copernicus`, capability `working_now`, actual transport `planetary_computer_stac`
+- sentinel3: datasource `copernicus`, capability `fallback_only`, actual transport `not_implemented`
+- landsat: datasource `opendatacube`, capability `needs_fix`, actual transport `planetary_computer_stac`
+
+## Runtime Modes
+
+- `offline`: no live probe attempt; the run stays fully offline and may optionally stop after skip logging with `--probe-only`
+- `offline_demo`: the demo path intentionally skips live probing and writes synthetic/demo outputs
+- `live_probe`: attempts real source probes; use `--probe-only` to stop after probe logging
+
+`live_probe` is currently probe-only by design. It is for verifying provider/runtime truth, not for generating the offline demo artifacts.
+
+## Status and Event Meanings
+
+Dataset probe events must be read together with `status`, `capability`, and `actual_transport`.
+
+- `dataset.probe.succeeded` + `live_success`: a real live probe succeeded
+- `dataset.probe.failed` + `live_failure`: a live probe was attempted and failed without using fallback/demo artifacts
+- `dataset.probe.failed` + `live_failure_fallback`: a live attempt degraded into fallback behavior in a runtime that actually uses fallback outputs
+- `dataset.probe.skipped` + `offline_demo_skip`: the probe was intentionally skipped because the run stayed in `offline` or `offline_demo`
+
+Current fallback semantics:
+
+- Offline skips are not network failures
+- Live failures are honest probe failures or not-yet-implemented live paths
+- `fallback.activated` is used for degraded demo/output behavior, not for probe-only verification runs
+
+## Verification Commands
+
+Run these from `backend/`.
+
+Provider-facing dataset probe tests:
 
 ```bash
-pytest -m integration -q
+pytest tests/test_dataset_probe.py tests/test_sources.py tests/test_cli.py -q
 ```
 
-When the live data loaders are finished, the planned manual CLI command is:
+Offline demo path:
 
 ```bash
-python -m urbancanopy.cli --config configs/multicity-demo.yml --output-dir data/outputs/multicity-demo
+pytest tests/test_cli.py::test_run_pipeline_writes_real_offline_demo_outputs -q
 ```
 
-For explicit provider probe verification during live-mode work, run a targeted source load and confirm a `dataset.probe.succeeded` or `dataset.probe.failed` event is recorded with `provider`, `source_key`, and probe detail metadata. The current backend split is:
-
-- Copernicus probes for Sentinel-2 and Sentinel-3
-- Open Data Cube probes for Landsat
-
-For the current offline smoke/integration verification path, run:
+Manual offline demo run:
 
 ```bash
-pytest -m integration -q
+python -m urbancanopy.cli --config configs/multicity-demo.yml --output-dir ../tmp/offline-demo --mode offline_demo
 ```
 
-## Completion Checks
+Live probe path:
 
-Before calling the backend slice complete, verify all of the following:
+```bash
+python -m urbancanopy.cli --config configs/multicity-demo.yml --output-dir ../tmp/live-probe --mode live_probe --probe-only
+```
 
-1. **Offline pipeline check**
-   - Run the offline integration path and confirm outputs are written without contacting live providers.
-   - Expect explicit `dataset.probe.failed` events for skipped offline-demo probes and `fallback.activated` events for demo surface layers or unavailable live access.
+Read the live probe results per datasource label:
 
-2. **Live provider probe check**
-   - Run a live provider probe against each configured source and confirm the logger records one probe event per source.
-   - `dataset.probe.succeeded` means the provider returned at least one item.
-   - `dataset.probe.failed` means the request errored, returned no items, or the system intentionally skipped the probe because the run stayed offline.
+- `copernicus`: verify the Sentinel probe events honestly show `working_now` for `sentinel2` and `fallback_only` for `sentinel3`
+- `opendatacube`: verify the Landsat probe events still report datasource `opendatacube` while current capability remains `needs_fix`
 
-3. **Degraded or fallback conditions**
-   - The run is degraded whenever `fallbackUsed` is `true` for a probe or a `fallback.activated` event is emitted.
-   - Offline demo mode counts as degraded by design because live probes are skipped and offline artifacts stand in for provider data.
-   - A probe that returns no items also counts as fallback/degraded because the pipeline cannot rely on live coverage for that source.
+When reading live probe output, keep the datasource contract separate from transport truth:
 
-## Live API Split
+- `copernicus` remains the datasource label for Sentinel probes even when one source is fallback-only
+- `opendatacube` remains the datasource label for Landsat even though the current live transport is still `planetary_computer_stac`
 
-The backend intentionally keeps the live-source split explicit based on provider capabilities:
+## Current Support Statement
 
-1. **Copernicus API**
-   - Sourced: **Sentinel-2** for greenness and built-up layers, and **Sentinel-3** for metro-scale comparison.
-   - Why: Copernicus Data Space catalogs are the planned live source for these Sentinel products.
-
-2. **Open Data Cube API**
-   - Sourced: **Landsat surface temperature** and future indexed products.
-   - Why: Open Data Cube is the planned live path for analysis-ready thermal and indexed raster products.
-
-## Current Status
-
-The present repository state does not yet execute the full live data ingestion path end to end. The offline/demo flow is the supported path today, while the Copernicus and Open Data Cube integrations above describe the intended production data split as live loaders are completed.
-
-## Integration Testing
-
-Tests marked with `@pytest.mark.integration` remain offline-only unless a test explicitly says otherwise. The multicity smoke test loads the real `configs/multicity-demo.yml` configuration from the `backend` directory context to catch config-path drift without contacting Copernicus or Open Data Cube services.
+The supported checked-in workflow today is the offline and offline-demo path. Live probing is implemented to report honest runtime truth, but full end-to-end live production loading is not complete for every datasource-backed source.
