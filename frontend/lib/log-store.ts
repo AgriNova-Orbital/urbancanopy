@@ -51,9 +51,11 @@ export interface FrontendLogStore {
 export function createLogStore(options?: {
   storageKey?: string;
   storage?: StorageLike;
+  maxQueueSize?: number;
 }): FrontendLogStore {
   const storageKey = options?.storageKey ?? "urbancanopy.frontend.logs";
   const storage = resolveStorage(options?.storage);
+  const maxQueueSize = options?.maxQueueSize ?? 200;
 
   const readQueue = (): FrontendLogEvent[] => {
     const raw = storage.getItem(storageKey);
@@ -71,8 +73,9 @@ export function createLogStore(options?: {
   };
 
   const writeQueue = (events: FrontendLogEvent[]): FrontendLogEvent[] => {
-    storage.setItem(storageKey, JSON.stringify(events));
-    return events;
+    const nextEvents = maxQueueSize > 0 ? events.slice(-maxQueueSize) : [];
+    storage.setItem(storageKey, JSON.stringify(nextEvents));
+    return nextEvents;
   };
 
   return {

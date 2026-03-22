@@ -82,7 +82,32 @@ async function testConcurrentLogsDoNotDuplicateTransportPayloads() {
   assert(logger.queueSize() === 0, "expected queue cleared after shared flush");
 }
 
+async function testLogStoreDropsOldestEntriesWhenQueueCapIsReached() {
+  const store = createLogStore({
+    storageKey: "contract-max-queue",
+    maxQueueSize: 2,
+  });
+
+  const logger = createFrontendLogger({
+    store,
+    transport: async () => {
+      throw new Error("offline");
+    },
+  });
+
+  await logger.warn("ui.warn.first", "first warning");
+  await logger.warn("ui.warn.second", "second warning");
+  await logger.warn("ui.warn.third", "third warning");
+
+  const queuedEvents = store.list();
+
+  assert(logger.queueSize() === 2, "expected queue to stay capped at two events");
+  assert(queuedEvents[0].event === "ui.warn.second", "expected oldest event to be dropped first");
+  assert(queuedEvents[1].event === "ui.warn.third", "expected newest event to be retained");
+}
+
 await testOfflineTransportQueuesEvent();
 await testDefaultLoggerRetainsQueueWithoutBackend();
 await testSuccessfulSyncClearsQueueAndUpdatesStatus();
 await testConcurrentLogsDoNotDuplicateTransportPayloads();
+await testLogStoreDropsOldestEntriesWhenQueueCapIsReached();

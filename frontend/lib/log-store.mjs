@@ -27,6 +27,7 @@ function resolveStorage(storage) {
 export function createLogStore(options = {}) {
   const storageKey = options.storageKey ?? "urbancanopy.frontend.logs";
   const storage = resolveStorage(options.storage);
+  const maxQueueSize = options.maxQueueSize ?? 200;
 
   const readQueue = () => {
     const raw = storage.getItem(storageKey);
@@ -44,8 +45,9 @@ export function createLogStore(options = {}) {
   };
 
   const writeQueue = (events) => {
-    storage.setItem(storageKey, JSON.stringify(events));
-    return events;
+    const nextEvents = maxQueueSize > 0 ? events.slice(-maxQueueSize) : [];
+    storage.setItem(storageKey, JSON.stringify(nextEvents));
+    return nextEvents;
   };
 
   return {
