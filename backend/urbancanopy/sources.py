@@ -5,11 +5,68 @@ import planetary_computer
 import odc.stac
 import xarray as xr
 
+from urbancanopy.logging_schema import build_event
+
 
 def _log_event(logger, level: str, **event_fields: object) -> None:
     if logger is None:
         return
     getattr(logger, level)(**event_fields)
+
+
+def dataset_probe_result(
+    *,
+    provider: str,
+    source_key: str,
+    ok: bool,
+    detail: str,
+    fallback_used: bool = False,
+    run_id: str | None = None,
+    mode: str = "offline",
+    online: bool | None = None,
+    meta: dict[str, object] | None = None,
+) -> dict[str, object]:
+    probe_meta: dict[str, object] = {
+        "provider": provider,
+        "source_key": source_key,
+        "detail": detail,
+    }
+    if meta is not None:
+        probe_meta.update(meta)
+
+    level = "info" if ok else "warning" if fallback_used else "error"
+    event = "dataset.probe.succeeded" if ok else "dataset.probe.failed"
+    message = detail if detail else "dataset probe completed"
+
+    return build_event(
+        level=level,
+        event=event,
+        component="sources",
+        message=message,
+        run_id=run_id,
+        mode=mode,
+        online=online,
+        fallback_used=fallback_used,
+        meta=probe_meta,
+    )
+
+
+def _log_probe_result(logger, probe: dict[str, object]) -> dict[str, object]:
+    if logger is None:
+        return probe
+
+    getattr(logger, str(probe["level"]))(
+        event=probe["event"],
+        component=probe["component"],
+        message=probe["message"],
+        run_id=probe.get("runId"),
+        job_id=probe.get("jobId"),
+        mode=probe.get("mode"),
+        online=probe.get("online"),
+        fallback_used=bool(probe.get("fallbackUsed")),
+        meta=probe.get("meta"),
+    )
+    return probe
 
 
 class LiveAccessNotImplementedError(RuntimeError):
@@ -36,6 +93,19 @@ class CatalogClient:
         run_id: str | None = None,
         mode: str = "offline",
     ) -> xr.DataArray:
+        _log_probe_result(
+            logger,
+            dataset_probe_result(
+                provider=self.provider,
+                source_key=self.source_key,
+                ok=False,
+                detail="live catalog access unavailable; fallback required",
+                fallback_used=True,
+                run_id=run_id,
+                mode=mode,
+                meta={"bbox": bbox},
+            ),
+        )
         _log_event(
             logger,
             "warning",
@@ -90,24 +160,34 @@ class CopernicusStacClient(CatalogClient):
         try:
             items = self._search_items(bbox)
         except Exception as exc:
-            _log_event(
+            _log_probe_result(
                 logger,
-                "error",
-                event="dataset.probe.failed",
-                component="sources",
-                message="catalog probe failed",
-                run_id=run_id,
-                mode=mode,
-                meta={
-                    "source_key": self.source_key,
-                    "provider": self.provider,
-                    "bbox": bbox,
-                    "error": str(exc),
-                },
+                dataset_probe_result(
+                    provider=self.provider,
+                    source_key=self.source_key,
+                    ok=False,
+                    detail="catalog probe failed",
+                    run_id=run_id,
+                    mode=mode,
+                    meta={"bbox": bbox, "error": str(exc)},
+                ),
             )
             raise
 
         if not items:
+            _log_probe_result(
+                logger,
+                dataset_probe_result(
+                    provider=self.provider,
+                    source_key=self.source_key,
+                    ok=False,
+                    detail="catalog returned no items; fallback required",
+                    fallback_used=True,
+                    run_id=run_id,
+                    mode=mode,
+                    meta={"bbox": bbox, "item_count": 0},
+                ),
+            )
             _log_event(
                 logger,
                 "warning",
@@ -125,20 +205,17 @@ class CopernicusStacClient(CatalogClient):
             )
             return xr.DataArray()
 
-        _log_event(
+        _log_probe_result(
             logger,
-            "info",
-            event="dataset.probe.succeeded",
-            component="sources",
-            message="catalog probe succeeded",
-            run_id=run_id,
-            mode=mode,
-            meta={
-                "source_key": self.source_key,
-                "provider": self.provider,
-                "bbox": bbox,
-                "item_count": len(items),
-            },
+            dataset_probe_result(
+                provider=self.provider,
+                source_key=self.source_key,
+                ok=True,
+                detail="catalog probe succeeded",
+                run_id=run_id,
+                mode=mode,
+                meta={"bbox": bbox, "item_count": len(items)},
+            ),
         )
         # Ensure we always return an xarray dataarray even if empty
         return odc.stac.load(items, bbox=bbox, resolution=30, chunks={})
@@ -172,24 +249,34 @@ class OpenDataCubeClient(CatalogClient):
         try:
             items = self._search_items(bbox)
         except Exception as exc:
-            _log_event(
+            _log_probe_result(
                 logger,
-                "error",
-                event="dataset.probe.failed",
-                component="sources",
-                message="catalog probe failed",
-                run_id=run_id,
-                mode=mode,
-                meta={
-                    "source_key": self.source_key,
-                    "provider": self.provider,
-                    "bbox": bbox,
-                    "error": str(exc),
-                },
+                dataset_probe_result(
+                    provider=self.provider,
+                    source_key=self.source_key,
+                    ok=False,
+                    detail="catalog probe failed",
+                    run_id=run_id,
+                    mode=mode,
+                    meta={"bbox": bbox, "error": str(exc)},
+                ),
             )
             raise
 
         if not items:
+            _log_probe_result(
+                logger,
+                dataset_probe_result(
+                    provider=self.provider,
+                    source_key=self.source_key,
+                    ok=False,
+                    detail="catalog returned no items; fallback required",
+                    fallback_used=True,
+                    run_id=run_id,
+                    mode=mode,
+                    meta={"bbox": bbox, "item_count": 0},
+                ),
+            )
             _log_event(
                 logger,
                 "warning",
@@ -207,20 +294,17 @@ class OpenDataCubeClient(CatalogClient):
             )
             return xr.DataArray()
 
-        _log_event(
+        _log_probe_result(
             logger,
-            "info",
-            event="dataset.probe.succeeded",
-            component="sources",
-            message="catalog probe succeeded",
-            run_id=run_id,
-            mode=mode,
-            meta={
-                "source_key": self.source_key,
-                "provider": self.provider,
-                "bbox": bbox,
-                "item_count": len(items),
-            },
+            dataset_probe_result(
+                provider=self.provider,
+                source_key=self.source_key,
+                ok=True,
+                detail="catalog probe succeeded",
+                run_id=run_id,
+                mode=mode,
+                meta={"bbox": bbox, "item_count": len(items)},
+            ),
         )
         return odc.stac.load(items, bbox=bbox, resolution=30, chunks={})
 

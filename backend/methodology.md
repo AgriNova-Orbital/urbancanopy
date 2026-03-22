@@ -6,17 +6,46 @@ This document tracks the technical execution of the multicity cooling pipeline.
 
 Today, the checked-in multicity demo path is intentionally offline-first: it validates configuration, CLI wiring, and demo execution without requiring live remote data access.
 
+The default offline pipeline check is:
+
+```bash
+pytest -m integration -q
+```
+
 When the live data loaders are finished, the planned manual CLI command is:
 
 ```bash
 python -m urbancanopy.cli --config configs/multicity-demo.yml --output-dir data/outputs/multicity-demo
 ```
 
+For explicit provider probe verification during live-mode work, run a targeted source load and confirm a `dataset.probe.succeeded` or `dataset.probe.failed` event is recorded with `provider`, `source_key`, and probe detail metadata. The current backend split is:
+
+- Copernicus probes for Sentinel-2 and Sentinel-3
+- Open Data Cube probes for Landsat
+
 For the current offline smoke/integration verification path, run:
 
 ```bash
 pytest -m integration -q
 ```
+
+## Completion Checks
+
+Before calling the backend slice complete, verify all of the following:
+
+1. **Offline pipeline check**
+   - Run the offline integration path and confirm outputs are written without contacting live providers.
+   - Expect explicit `dataset.probe.failed` events for skipped offline-demo probes and `fallback.activated` events for demo surface layers or unavailable live access.
+
+2. **Live provider probe check**
+   - Run a live provider probe against each configured source and confirm the logger records one probe event per source.
+   - `dataset.probe.succeeded` means the provider returned at least one item.
+   - `dataset.probe.failed` means the request errored, returned no items, or the system intentionally skipped the probe because the run stayed offline.
+
+3. **Degraded or fallback conditions**
+   - The run is degraded whenever `fallbackUsed` is `true` for a probe or a `fallback.activated` event is emitted.
+   - Offline demo mode counts as degraded by design because live probes are skipped and offline artifacts stand in for provider data.
+   - A probe that returns no items also counts as fallback/degraded because the pipeline cannot rely on live coverage for that source.
 
 ## Live API Split
 

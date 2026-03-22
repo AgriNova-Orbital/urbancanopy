@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Mapping
 from uuid import uuid4
 import zlib
 
@@ -24,7 +25,11 @@ from urbancanopy.logger import UrbancanopyLogger
 from urbancanopy.modeling import build_city_signature_table
 from urbancanopy.parks import pci_summary
 from urbancanopy.scoring import priority_score
-from urbancanopy.sources import build_catalog_clients
+from urbancanopy.sources import (
+    CatalogClient,
+    build_catalog_clients,
+    dataset_probe_result,
+)
 from urbancanopy.vectorize import vectorize_priority_cells
 
 
@@ -156,6 +161,35 @@ def _build_run_id(log_timestamp: str | None) -> str:
     return f"run-{uuid4().hex[:12]}"
 
 
+def _log_offline_probe_skips(
+    *,
+    logger: UrbancanopyLogger,
+    clients: Mapping[str, CatalogClient],
+    run_id: str,
+    mode: str,
+) -> None:
+    for source_key, client in clients.items():
+        probe = dataset_probe_result(
+            provider=client.provider,
+            source_key=source_key,
+            ok=False,
+            detail="live dataset probe skipped in offline demo mode",
+            fallback_used=True,
+            run_id=run_id,
+            mode=mode,
+            meta={"reason": "offline_demo"},
+        )
+        logger.warning(
+            event=probe["event"],
+            component="cli",
+            message=probe["message"],
+            run_id=run_id,
+            mode=mode,
+            fallback_used=True,
+            meta=probe["meta"],
+        )
+
+
 def execute_pipeline(
     *,
     config_path: Path,
@@ -188,21 +222,18 @@ def execute_pipeline(
             fallback_used=mode == "offline_demo",
             meta={"config_path": config_path, "output_dir": output_dir},
         )
-        build_catalog_clients(
+        catalog_clients = build_catalog_clients(
             {key: str(value) for key, value in cfg.catalogs.items()},
             logger=logger,
             run_id=run_id,
             mode=mode,
         )
         if mode == "offline_demo":
-            logger.warning(
-                event="dataset.probe.failed",
-                component="cli",
-                message="live dataset probes skipped in offline demo mode",
+            _log_offline_probe_skips(
+                logger=logger,
+                clients=catalog_clients,
                 run_id=run_id,
                 mode=mode,
-                fallback_used=True,
-                meta={"reason": "offline_demo"},
             )
 
         city_samples: list[pd.DataFrame] = []
