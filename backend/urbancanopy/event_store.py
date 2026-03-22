@@ -8,6 +8,13 @@ class EventStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
 
+    @classmethod
+    def create(cls, *, base_dir: Path, timestamp: str | None = None) -> "EventStore":
+        filename = f"{timestamp}_events.db" if timestamp is not None else "events.db"
+        store = cls(base_dir / filename)
+        store.initialize()
+        return store
+
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db_path) as connection:

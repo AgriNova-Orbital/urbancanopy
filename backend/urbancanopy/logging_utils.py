@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from logging import (
     DEBUG,
@@ -10,7 +11,7 @@ from logging import (
     getLogger,
 )
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 
 class ExactLevelFilter(Filter):
@@ -66,3 +67,7 @@ def create_file_logger(
     logger.addHandler(debug_handler)
     logger.addHandler(error_handler)
     return logger
+
+
+def serialize_event(event: dict[str, Any]) -> str:
+    return json.dumps(event, sort_keys=True)
