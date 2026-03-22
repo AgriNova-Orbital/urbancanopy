@@ -5,6 +5,8 @@ import Map, { NavigationControl, Source, Layer, FillLayer, MapRef } from "react-
 import bbox from "@turf/bbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 
+import { reportFrontendRuntimeIssue } from "./FrontendLogger";
+
 const priorityLayerStyle: FillLayer = {
   id: "priority-zones",
   type: "fill",
@@ -43,7 +45,12 @@ export default function MapViewer() {
           );
         }
       })
-      .catch(err => console.log("Failed to load priority zones", err));
+      .catch(err => {
+        reportFrontendRuntimeIssue("error", "ui.map.error", "Failed to load priority zones", {
+          source: "priority_zones.geojson",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   }, []);
 
   if (!mapboxToken) {
@@ -69,6 +76,11 @@ export default function MapViewer() {
         }}
         mapStyle="mapbox://styles/mapbox/dark-v11"
         style={{ width: "100%", height: "100%" }}
+        onError={(event) => {
+          reportFrontendRuntimeIssue("error", "ui.map.error", "Mapbox runtime error", {
+            error: event.error?.message ?? "Unknown Mapbox error",
+          });
+        }}
       >
         <NavigationControl position="bottom-right" />
         
