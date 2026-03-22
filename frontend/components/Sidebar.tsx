@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Papa from "papaparse";
 import { ThermometerSun, Leaf, Building2 } from "lucide-react";
 
+import OperationsStatus from "./OperationsStatus";
+
 type CitySignature = {
   city: string;
   heat_gap_c: number;
@@ -34,7 +36,11 @@ export default function Sidebar() {
       <p className="text-sm text-slate-400 mb-6">Cross-city cooling analysis</p>
 
       <div className="space-y-4">
-        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">City Signatures</h2>
+        <OperationsStatus />
+
+        <div>
+          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">City Signatures</h2>
+        </div>
         
         {signatures.length === 0 ? (
           <p className="text-sm text-slate-500">Loading signatures or run `make data` first...</p>
