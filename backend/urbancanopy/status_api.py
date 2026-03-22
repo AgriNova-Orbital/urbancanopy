@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,8 @@ from urbancanopy.event_store import EventStore
 
 
 def create_app(*, base_dir: Path) -> FastAPI:
-    store = EventStore.create(base_dir=base_dir)
+    store = EventStore(_resolve_db_path(base_dir))
+    store.initialize()
     app = FastAPI()
 
     @app.get("/api/status")
@@ -69,16 +71,48 @@ def _list_artifacts(db_path: Path) -> list[dict[str, Any]]:
 
     artifacts: list[dict[str, Any]] = []
     for row in rows:
+        freshness_seconds = _freshness_seconds(row["created_at"])
         artifacts.append(
             {
                 "artifactType": row["artifact_type"],
                 "path": row["path"],
                 "createdAt": row["created_at"],
-                "status": "fresh",
+                "status": _artifact_status(freshness_seconds),
+                "freshnessSeconds": freshness_seconds,
+                "isFresh": freshness_seconds <= 86400,
                 "meta": _parse_json(row["meta_json"]),
             }
         )
     return artifacts
+
+
+def _resolve_db_path(base_dir: Path) -> Path:
+    candidates = sorted(
+        base_dir.glob("*_events.db"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0]
+    return base_dir / "events.db"
+
+
+def _artifact_status(freshness_seconds: int) -> str:
+    if freshness_seconds <= 86400:
+        return "fresh"
+    return "stale"
+
+
+def _freshness_seconds(created_at: str) -> int:
+    created_at_dt = datetime.fromisoformat(created_at)
+    return max(
+        0,
+        int(
+            (
+                datetime.now(timezone.utc) - created_at_dt.astimezone(timezone.utc)
+            ).total_seconds()
+        ),
+    )
 
 
 def _read_scalar(db_path: Path, query: str) -> int:
