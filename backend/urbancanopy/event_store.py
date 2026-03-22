@@ -3,6 +3,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from urbancanopy.logging_utils import _json_default
+
 
 class EventStore:
     def __init__(self, db_path: Path) -> None:
@@ -113,7 +115,7 @@ class EventStore:
                     event.get("mode"),
                     self._encode_bool(event.get("online")),
                     self._encode_bool(event.get("fallbackUsed")) or 0,
-                    json.dumps(meta),
+                    json.dumps(meta, default=_json_default),
                 ),
             )
 

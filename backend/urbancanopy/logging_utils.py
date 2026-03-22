@@ -1,4 +1,5 @@
 import json
+from os import PathLike
 from datetime import datetime
 from logging import (
     DEBUG,
@@ -70,4 +71,10 @@ def create_file_logger(
 
 
 def serialize_event(event: dict[str, Any]) -> str:
-    return json.dumps(event, sort_keys=True)
+    return json.dumps(event, sort_keys=True, default=_json_default)
+
+
+def _json_default(value: Any) -> str:
+    if isinstance(value, PathLike):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
