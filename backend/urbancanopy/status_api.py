@@ -50,17 +50,13 @@ async def _event_stream(request: Request, store: EventStore):
 
     yield _format_sse(
         "status",
-        {
-            "mode": _mode_for(latest_event),
-            "status": _status_for(latest_event),
-            "online": latest_event.get("online") if latest_event is not None else False,
-        },
+        _status_payload(latest_event),
     )
 
     for event in recent_events:
         yield _format_sse("event", event)
 
-    for _ in range(4):
+    while True:
         if await request.is_disconnected():
             break
 
@@ -71,6 +67,8 @@ async def _event_stream(request: Request, store: EventStore):
                 continue
             seen.add(event_key)
             yield _format_sse("event", event)
+            if _should_emit_status(event):
+                yield _format_sse("status", _status_payload(event))
 
 
 def _mode_for(latest_event: dict[str, Any] | None) -> str:
@@ -184,3 +182,15 @@ def _event_key(event: dict[str, Any]) -> tuple[Any, ...]:
         event.get("component"),
         event.get("message"),
     )
+
+
+def _status_payload(latest_event: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "mode": _mode_for(latest_event),
+        "status": _status_for(latest_event),
+        "online": latest_event.get("online") if latest_event is not None else False,
+    }
+
+
+def _should_emit_status(event: dict[str, Any]) -> bool:
+    return event.get("event") in {"mode.changed", "connectivity.changed"}
