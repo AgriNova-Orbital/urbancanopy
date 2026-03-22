@@ -296,31 +296,11 @@ def build_catalog_clients(
             clients[key] = CopernicusStacClient(
                 source_key=key, provider=value, collection=key
             )
-            _log_event(
-                logger,
-                "info",
-                event="dataset.probe.succeeded",
-                component="sources",
-                message="catalog adapter configured",
-                run_id=run_id,
-                mode=mode,
-                meta={"source_key": key, "provider": value},
-            )
             continue
 
         if value == "opendatacube":
             clients[key] = OpenDataCubeClient(
                 source_key=key, provider=value, product=key
-            )
-            _log_event(
-                logger,
-                "info",
-                event="dataset.probe.succeeded",
-                component="sources",
-                message="catalog adapter configured",
-                run_id=run_id,
-                mode=mode,
-                meta={"source_key": key, "provider": value},
             )
             continue
 

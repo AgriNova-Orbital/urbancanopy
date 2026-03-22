@@ -7,8 +7,35 @@ import pytest
 from urbancanopy.cli import execute_pipeline, run_pipeline
 
 
-def test_run_pipeline_creates_backend_logs(tmp_path: Path) -> None:
+def test_run_pipeline_creates_backend_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     output_dir = tmp_path / "outputs"
+
+    from shapely.geometry import box
+
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_priority_zones",
+        lambda _df, path, **_kwargs: path.write_text("{}"),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_city_comparison",
+        lambda df, path, **_kwargs: df.to_csv(path, index=False),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_city_signature",
+        lambda df, path, **_kwargs: df.to_csv(path, index=False),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_park_cooling",
+        lambda df, path, **_kwargs: df.to_csv(path, index=False),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli._load_city_boundary",
+        lambda _city: gpd.GeoDataFrame(
+            geometry=[box(121.5, 25.0, 121.6, 25.1)], crs="EPSG:4326"
+        ),
+    )
 
     run_pipeline(
         config_path=Path("configs/multicity-demo.yml"),
@@ -20,6 +47,52 @@ def test_run_pipeline_creates_backend_logs(tmp_path: Path) -> None:
     assert (tmp_path / "2026-03-22_12-45-00_back.log").exists()
     assert (tmp_path / "2026-03-22_12-45-00_back_debug.log").exists()
     assert (tmp_path / "2026-03-22_12-45-00_back_error.log").exists()
+
+
+def test_run_pipeline_offline_demo_does_not_report_fake_probe_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from shapely.geometry import box
+
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_priority_zones",
+        lambda _df, path, **_kwargs: path.write_text("{}"),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_city_comparison",
+        lambda df, path, **_kwargs: df.to_csv(path, index=False),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_city_signature",
+        lambda df, path, **_kwargs: df.to_csv(path, index=False),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli.export_park_cooling",
+        lambda df, path, **_kwargs: df.to_csv(path, index=False),
+    )
+    monkeypatch.setattr(
+        "urbancanopy.cli._load_city_boundary",
+        lambda _city: gpd.GeoDataFrame(
+            geometry=[box(121.5, 25.0, 121.6, 25.1)], crs="EPSG:4326"
+        ),
+    )
+
+    run_pipeline(
+        config_path=Path("configs/multicity-demo.yml"),
+        output_dir=tmp_path / "outputs",
+        log_dir=tmp_path,
+        log_timestamp="2026-03-22_13-11-00",
+    )
+
+    event_log = tmp_path / "2026-03-22_13-11-00_events.db"
+    from urbancanopy.event_store import EventStore
+
+    store = EventStore(event_log)
+    events = store.list_recent_events(limit=100)
+
+    assert all(event["event"] != "dataset.probe.succeeded" for event in events)
+    assert any(event["event"] == "dataset.probe.failed" for event in events)
+    assert any(event["event"] == "fallback.activated" for event in events)
 
 
 def test_run_pipeline_writes_real_offline_demo_outputs(

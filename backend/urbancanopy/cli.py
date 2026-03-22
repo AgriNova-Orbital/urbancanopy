@@ -194,6 +194,16 @@ def execute_pipeline(
             run_id=run_id,
             mode=mode,
         )
+        if mode == "offline_demo":
+            logger.warning(
+                event="dataset.probe.failed",
+                component="cli",
+                message="live dataset probes skipped in offline demo mode",
+                run_id=run_id,
+                mode=mode,
+                fallback_used=True,
+                meta={"reason": "offline_demo"},
+            )
 
         city_samples: list[pd.DataFrame] = []
         surface_context: list[pd.DataFrame] = []

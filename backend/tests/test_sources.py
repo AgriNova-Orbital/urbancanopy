@@ -156,6 +156,29 @@ def test_build_catalog_clients_logs_probe_failures(tmp_path: Path) -> None:
     assert recent[0]["meta"]["missing_keys"] == ["sentinel3"]
 
 
+def test_build_catalog_clients_does_not_log_probe_success_for_configuration_only(
+    tmp_path: Path,
+) -> None:
+    logger = UrbancanopyLogger.create(
+        base_dir=tmp_path,
+        timestamp="2026-03-22_13-10-00",
+    )
+
+    build_catalog_clients(
+        {
+            "sentinel2": "copernicus",
+            "sentinel3": "copernicus",
+            "landsat": "opendatacube",
+        },
+        logger=logger,
+        run_id="run-1",
+        mode="offline_demo",
+    )
+
+    events = logger.store.list_recent_events(limit=20)
+    assert [event["event"] for event in events].count("dataset.probe.succeeded") == 0
+
+
 def test_catalog_client_load_contract_allows_future_data_return_values() -> None:
     import xarray as xr
 
