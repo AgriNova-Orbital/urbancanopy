@@ -41,22 +41,24 @@ def create_file_logger(
         else datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     )
     logger = getLogger(f"urbancanopy.{side}.{stamp}.{log_dir}")
-    logger.handlers.clear()
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
     logger.setLevel(DEBUG)
     logger.propagate = False
 
     formatter = Formatter("%(message)s")
 
-    info_handler = FileHandler(log_dir / f"{stamp}_{side}.log")
+    info_handler = FileHandler(log_dir / f"{stamp}_{side}.log", encoding="utf-8")
     info_handler.setLevel(INFO)
     info_handler.addFilter(ExactLevelFilter(INFO))
     info_handler.setFormatter(formatter)
 
-    debug_handler = FileHandler(log_dir / f"{stamp}_{side}_debug.log")
+    debug_handler = FileHandler(log_dir / f"{stamp}_{side}_debug.log", encoding="utf-8")
     debug_handler.setLevel(DEBUG)
     debug_handler.setFormatter(formatter)
 
-    error_handler = FileHandler(log_dir / f"{stamp}_{side}_error.log")
+    error_handler = FileHandler(log_dir / f"{stamp}_{side}_error.log", encoding="utf-8")
     error_handler.setLevel(WARNING)
     error_handler.setFormatter(formatter)
 
