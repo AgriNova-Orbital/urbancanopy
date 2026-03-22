@@ -1,9 +1,12 @@
+import asyncio
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 
 from urbancanopy.event_store import EventStore
 
@@ -29,7 +32,45 @@ def create_app(*, base_dir: Path) -> FastAPI:
     def get_artifacts() -> dict[str, Any]:
         return {"artifacts": _list_artifacts(store.db_path)}
 
+    @app.get("/api/events/stream")
+    async def stream_events(request: Request) -> StreamingResponse:
+        return StreamingResponse(
+            _event_stream(request, store),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     return app
+
+
+async def _event_stream(request: Request, store: EventStore):
+    recent_events = list(reversed(store.list_recent_events(limit=20)))
+    latest_event = recent_events[-1] if recent_events else None
+    seen = {_event_key(event) for event in recent_events}
+
+    yield _format_sse(
+        "status",
+        {
+            "mode": _mode_for(latest_event),
+            "status": _status_for(latest_event),
+            "online": latest_event.get("online") if latest_event is not None else False,
+        },
+    )
+
+    for event in recent_events:
+        yield _format_sse("event", event)
+
+    for _ in range(4):
+        if await request.is_disconnected():
+            break
+
+        await asyncio.sleep(0.1)
+        for event in reversed(store.list_recent_events(limit=20)):
+            event_key = _event_key(event)
+            if event_key in seen:
+                continue
+            seen.add(event_key)
+            yield _format_sse("event", event)
 
 
 def _mode_for(latest_event: dict[str, Any] | None) -> str:
@@ -128,6 +169,18 @@ def _read_scalar(db_path: Path, query: str) -> int:
 
 
 def _parse_json(value: str) -> dict[str, Any]:
-    import json
-
     return json.loads(value)
+
+
+def _format_sse(event_name: str, payload: dict[str, Any]) -> str:
+    data = json.dumps(payload, separators=(",", ":"))
+    return f"event: {event_name}\ndata: {data}\n\n"
+
+
+def _event_key(event: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        event.get("ts"),
+        event.get("event"),
+        event.get("component"),
+        event.get("message"),
+    )
