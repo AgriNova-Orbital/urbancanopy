@@ -161,6 +161,27 @@ def _build_run_id(log_timestamp: str | None) -> str:
     return f"run-{uuid4().hex[:12]}"
 
 
+def _resolve_mode(
+    config_path: Path,
+    config_name: str | None,
+    explicit_mode: str | None,
+) -> str:
+    if explicit_mode is not None:
+        return explicit_mode
+    return _mode_for_config(config_path, config_name)
+
+
+def _bbox_from_boundary(
+    boundary: gpd.GeoDataFrame,
+) -> tuple[float, float, float, float]:
+    min_x, min_y, max_x, max_y = boundary.total_bounds
+    return (float(min_x), float(min_y), float(max_x), float(max_y))
+
+
+def _is_offline_artifact_mode(mode: str) -> bool:
+    return mode in {"offline", "offline_demo"}
+
+
 def _log_offline_probe_skips(
     *,
     logger: UrbancanopyLogger,
@@ -168,16 +189,18 @@ def _log_offline_probe_skips(
     run_id: str,
     mode: str,
 ) -> None:
+    detail = f"live dataset probe skipped in {mode} mode"
     for source_key, client in clients.items():
         probe = dataset_probe_result(
             provider=client.provider,
             source_key=source_key,
-            ok=False,
-            detail="live dataset probe skipped in offline demo mode",
-            fallback_used=True,
+            status="offline_demo_skip",
+            detail=detail,
+            capability=client.capability,
+            actual_transport=client.actual_transport,
             run_id=run_id,
             mode=mode,
-            meta={"reason": "offline_demo"},
+            meta={"reason": mode},
         )
         logger.warning(
             event=probe["event"],
@@ -185,9 +208,24 @@ def _log_offline_probe_skips(
             message=probe["message"],
             run_id=run_id,
             mode=mode,
-            fallback_used=True,
+            fallback_used=False,
             meta=probe["meta"],
         )
+
+
+def _probe_catalog_clients(
+    *,
+    clients: Mapping[str, CatalogClient],
+    bbox: tuple[float, float, float, float],
+    logger: UrbancanopyLogger,
+    run_id: str,
+    mode: str,
+) -> None:
+    for client in clients.values():
+        try:
+            client.load(bbox, logger=logger, run_id=run_id, mode=mode)
+        except Exception:
+            continue
 
 
 def execute_pipeline(
@@ -196,59 +234,112 @@ def execute_pipeline(
     output_dir: Path,
     log_dir: Path | None = None,
     log_timestamp: str | None = None,
+    mode: str | None = None,
+    probe_only: bool = False,
 ) -> dict[str, Path]:
     logger = UrbancanopyLogger.create(base_dir=log_dir, timestamp=log_timestamp)
     run_id = _build_run_id(log_timestamp)
-    mode = _mode_for_config(config_path)
+    resolved_mode = _resolve_mode(config_path, None, mode)
+    fallback_used = False
+
+    if resolved_mode == "live_probe" and not probe_only:
+        raise ValueError("live_probe mode requires --probe-only")
 
     try:
         cfg = load_run_config(config_path)
-        mode = _mode_for_config(config_path, cfg.name)
+        resolved_mode = _resolve_mode(config_path, cfg.name, mode)
+        if resolved_mode == "live_probe" and not probe_only:
+            raise ValueError("live_probe mode requires --probe-only")
         logger.info(
             event="mode.changed",
             component="cli",
-            message=f"pipeline mode set to {mode}",
+            message=f"pipeline mode set to {resolved_mode}",
             run_id=run_id,
-            mode=mode,
-            fallback_used=mode == "offline_demo",
-            meta={"config_path": config_path, "output_dir": output_dir},
+            mode=resolved_mode,
+            fallback_used=fallback_used,
+            meta={
+                "config_path": config_path,
+                "output_dir": output_dir,
+                "probe_only": probe_only,
+            },
         )
         logger.info(
             event="pipeline.started",
             component="cli",
             message="pipeline starting",
             run_id=run_id,
-            mode=mode,
-            fallback_used=mode == "offline_demo",
-            meta={"config_path": config_path, "output_dir": output_dir},
+            mode=resolved_mode,
+            fallback_used=fallback_used,
+            meta={
+                "config_path": config_path,
+                "output_dir": output_dir,
+                "probe_only": probe_only,
+            },
         )
         catalog_clients = build_catalog_clients(
             {key: str(value) for key, value in cfg.catalogs.items()},
             logger=logger,
             run_id=run_id,
-            mode=mode,
+            mode=resolved_mode,
         )
-        if mode == "offline_demo":
+
+        if _is_offline_artifact_mode(resolved_mode):
             _log_offline_probe_skips(
                 logger=logger,
                 clients=catalog_clients,
                 run_id=run_id,
-                mode=mode,
+                mode=resolved_mode,
             )
+            if probe_only:
+                logger.info(
+                    event="pipeline.completed",
+                    component="cli",
+                    message="probe-only run completed",
+                    run_id=run_id,
+                    mode=resolved_mode,
+                    fallback_used=fallback_used,
+                    meta={"outputs": {}, "probe_only": True},
+                )
+                return {}
+        elif resolved_mode == "live_probe":
+            focus_boundary = _load_city_boundary(cfg.focus_city)
+            focus_bbox = _bbox_from_boundary(focus_boundary)
+            _probe_catalog_clients(
+                clients=catalog_clients,
+                bbox=focus_bbox,
+                logger=logger,
+                run_id=run_id,
+                mode=resolved_mode,
+            )
+            logger.info(
+                event="pipeline.completed",
+                component="cli",
+                message="live probe completed",
+                run_id=run_id,
+                mode=resolved_mode,
+                fallback_used=fallback_used,
+                meta={"outputs": {}, "probe_only": True},
+            )
+            return {}
+
+        focus_boundary = _load_city_boundary(cfg.focus_city)
 
         city_samples: list[pd.DataFrame] = []
         surface_context: list[pd.DataFrame] = []
         focus_layers: tuple[xr.DataArray, xr.DataArray, xr.DataArray] | None = None
+        fallback_used = True
 
         for city in cfg.comparison_cities:
-            boundary = _load_city_boundary(city)
+            boundary = (
+                focus_boundary if city == cfg.focus_city else _load_city_boundary(city)
+            )
             lst, ndvi, ndbi = _surface_layers(city, boundary)
             logger.warning(
                 event="fallback.activated",
                 component="cli",
                 message="using offline demo surface layers",
                 run_id=run_id,
-                mode=mode,
+                mode=resolved_mode,
                 fallback_used=True,
                 meta={"city": city},
             )
@@ -307,28 +398,28 @@ def execute_pipeline(
             priority_geojson,
             logger=logger,
             run_id=run_id,
-            mode=mode,
+            mode=resolved_mode,
         )
         export_city_comparison(
             city_comparison,
             city_comparison_csv,
             logger=logger,
             run_id=run_id,
-            mode=mode,
+            mode=resolved_mode,
         )
         export_city_signature(
             city_signature,
             city_signature_csv,
             logger=logger,
             run_id=run_id,
-            mode=mode,
+            mode=resolved_mode,
         )
         export_park_cooling(
             park_cooling,
             park_cooling_csv,
             logger=logger,
             run_id=run_id,
-            mode=mode,
+            mode=resolved_mode,
         )
 
         outputs = _require_outputs(
@@ -344,8 +435,8 @@ def execute_pipeline(
             component="cli",
             message="pipeline completed",
             run_id=run_id,
-            mode=mode,
-            fallback_used=mode == "offline_demo",
+            mode=resolved_mode,
+            fallback_used=fallback_used,
             meta={"outputs": outputs},
         )
         return outputs
@@ -355,8 +446,8 @@ def execute_pipeline(
             component="cli",
             message="pipeline failed",
             run_id=run_id,
-            mode=mode,
-            fallback_used=mode == "offline_demo",
+            mode=resolved_mode,
+            fallback_used=fallback_used,
             meta={
                 "error": str(exc),
                 "config_path": config_path,
@@ -372,6 +463,8 @@ def run_pipeline(
     output_dir: Path,
     log_dir: Path | None = None,
     log_timestamp: str | None = None,
+    mode: str | None = None,
+    probe_only: bool = False,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     return execute_pipeline(
@@ -379,6 +472,8 @@ def run_pipeline(
         output_dir=output_dir,
         log_dir=log_dir,
         log_timestamp=log_timestamp,
+        mode=mode,
+        probe_only=probe_only,
     )
 
 
@@ -389,10 +484,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Urban Cooling Pipeline")
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--mode",
+        choices=["offline", "offline_demo", "live_probe"],
+        default=None,
+    )
+    parser.add_argument("--probe-only", action="store_true")
     args = parser.parse_args()
 
     try:
-        run_pipeline(config_path=args.config, output_dir=args.output_dir)
+        run_pipeline(
+            config_path=args.config,
+            output_dir=args.output_dir,
+            mode=args.mode,
+            probe_only=args.probe_only,
+        )
     except Exception:
         sys.exit(1)
 

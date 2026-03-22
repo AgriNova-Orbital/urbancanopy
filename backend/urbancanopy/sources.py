@@ -18,24 +18,52 @@ def dataset_probe_result(
     *,
     provider: str,
     source_key: str,
-    ok: bool,
+    status: str,
     detail: str,
-    fallback_used: bool = False,
+    capability: str,
+    actual_transport: str,
     run_id: str | None = None,
     mode: str = "offline",
     online: bool | None = None,
     meta: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    if status not in {
+        "live_success",
+        "live_failure",
+        "live_failure_fallback",
+        "offline_demo_skip",
+    }:
+        raise ValueError(f"Unsupported dataset probe status: {status}")
+
     probe_meta: dict[str, object] = {
         "provider": provider,
+        "datasource": provider,
         "source_key": source_key,
+        "status": status,
+        "capability": capability,
+        "actual_transport": actual_transport,
         "detail": detail,
     }
     if meta is not None:
         probe_meta.update(meta)
 
-    level = "info" if ok else "warning" if fallback_used else "error"
-    event = "dataset.probe.succeeded" if ok else "dataset.probe.failed"
+    if status == "live_success":
+        level = "info"
+        event = "dataset.probe.succeeded"
+        fallback_used = False
+    elif status == "live_failure":
+        level = "warning"
+        event = "dataset.probe.failed"
+        fallback_used = False
+    elif status == "offline_demo_skip":
+        level = "warning"
+        event = "dataset.probe.skipped"
+        fallback_used = False
+    else:
+        level = "warning"
+        event = "dataset.probe.failed"
+        fallback_used = True
+
     message = detail if detail else "dataset probe completed"
 
     return build_event(
@@ -69,6 +97,12 @@ def _log_probe_result(logger, probe: dict[str, object]) -> dict[str, object]:
     return probe
 
 
+def _ensure_dataset(data: xr.Dataset | xr.DataArray) -> xr.Dataset:
+    if isinstance(data, xr.Dataset):
+        return data
+    return data.to_dataset(name=data.name or "data")
+
+
 class LiveAccessNotImplementedError(RuntimeError):
     def __init__(self, source_key: str) -> None:
         super().__init__(
@@ -85,6 +119,14 @@ class CatalogClient:
     def name(self) -> str:
         return self.provider
 
+    @property
+    def capability(self) -> str:
+        return "fallback_only"
+
+    @property
+    def actual_transport(self) -> str:
+        return "not_implemented"
+
     def load(
         self,
         bbox: tuple[float, float, float, float] = (0, 0, 0, 0),
@@ -92,41 +134,61 @@ class CatalogClient:
         logger=None,
         run_id: str | None = None,
         mode: str = "offline",
-    ) -> xr.DataArray:
+    ) -> xr.Dataset:
+        status = "live_failure" if mode == "live_probe" else "live_failure_fallback"
+        detail = (
+            "live catalog access unavailable"
+            if mode == "live_probe"
+            else "live catalog access unavailable; fallback required"
+        )
         _log_probe_result(
             logger,
             dataset_probe_result(
                 provider=self.provider,
                 source_key=self.source_key,
-                ok=False,
-                detail="live catalog access unavailable; fallback required",
-                fallback_used=True,
+                status=status,
+                detail=detail,
+                capability=self.capability,
+                actual_transport=self.actual_transport,
                 run_id=run_id,
                 mode=mode,
                 meta={"bbox": bbox},
             ),
         )
-        _log_event(
-            logger,
-            "warning",
-            event="fallback.activated",
-            component="sources",
-            message="live catalog access unavailable; fallback required",
-            run_id=run_id,
-            mode=mode,
-            fallback_used=True,
-            meta={
-                "source_key": self.source_key,
-                "provider": self.provider,
-                "bbox": bbox,
-            },
-        )
+        if mode != "live_probe":
+            _log_event(
+                logger,
+                "warning",
+                event="fallback.activated",
+                component="sources",
+                message=detail,
+                run_id=run_id,
+                mode=mode,
+                fallback_used=True,
+                meta={
+                    "source_key": self.source_key,
+                    "provider": self.provider,
+                    "bbox": bbox,
+                },
+            )
         raise LiveAccessNotImplementedError(self.source_key)
 
 
 @dataclass(slots=True)
 class CopernicusStacClient(CatalogClient):
     collection: str
+
+    @property
+    def actual_transport(self) -> str:
+        if self.source_key == "sentinel3":
+            return "not_implemented"
+        return "planetary_computer_stac"
+
+    @property
+    def capability(self) -> str:
+        if self.source_key == "sentinel3":
+            return "fallback_only"
+        return "working_now"
 
     def _search_items(self, bbox: tuple[float, float, float, float]) -> list:
         catalog = pystac_client.Client.open(
@@ -148,7 +210,7 @@ class CopernicusStacClient(CatalogClient):
         logger=None,
         run_id: str | None = None,
         mode: str = "offline",
-    ) -> xr.DataArray:
+    ) -> xr.Dataset:
         if self.source_key == "sentinel3":
             return super(CopernicusStacClient, self).load(
                 bbox,
@@ -165,8 +227,10 @@ class CopernicusStacClient(CatalogClient):
                 dataset_probe_result(
                     provider=self.provider,
                     source_key=self.source_key,
-                    ok=False,
+                    status="live_failure",
                     detail="catalog probe failed",
+                    capability=self.capability,
+                    actual_transport=self.actual_transport,
                     run_id=run_id,
                     mode=mode,
                     meta={"bbox": bbox, "error": str(exc)},
@@ -175,55 +239,75 @@ class CopernicusStacClient(CatalogClient):
             raise
 
         if not items:
+            status = "live_failure" if mode == "live_probe" else "live_failure_fallback"
+            detail = (
+                "catalog returned no items"
+                if mode == "live_probe"
+                else "catalog returned no items; fallback required"
+            )
             _log_probe_result(
                 logger,
                 dataset_probe_result(
                     provider=self.provider,
                     source_key=self.source_key,
-                    ok=False,
-                    detail="catalog returned no items; fallback required",
-                    fallback_used=True,
+                    status=status,
+                    detail=detail,
+                    capability=self.capability,
+                    actual_transport=self.actual_transport,
                     run_id=run_id,
                     mode=mode,
                     meta={"bbox": bbox, "item_count": 0},
                 ),
             )
-            _log_event(
-                logger,
-                "warning",
-                event="fallback.activated",
-                component="sources",
-                message="catalog returned no items; fallback required",
-                run_id=run_id,
-                mode=mode,
-                fallback_used=True,
-                meta={
-                    "source_key": self.source_key,
-                    "provider": self.provider,
-                    "bbox": bbox,
-                },
-            )
-            return xr.DataArray()
+            if mode != "live_probe":
+                _log_event(
+                    logger,
+                    "warning",
+                    event="fallback.activated",
+                    component="sources",
+                    message=detail,
+                    run_id=run_id,
+                    mode=mode,
+                    fallback_used=True,
+                    meta={
+                        "source_key": self.source_key,
+                        "provider": self.provider,
+                        "bbox": bbox,
+                    },
+                )
+            return xr.Dataset()
 
         _log_probe_result(
             logger,
             dataset_probe_result(
                 provider=self.provider,
                 source_key=self.source_key,
-                ok=True,
+                status="live_success",
                 detail="catalog probe succeeded",
+                capability=self.capability,
+                actual_transport=self.actual_transport,
                 run_id=run_id,
                 mode=mode,
                 meta={"bbox": bbox, "item_count": len(items)},
             ),
         )
-        # Ensure we always return an xarray dataarray even if empty
-        return odc.stac.load(items, bbox=bbox, resolution=30, chunks={})
+        # Ensure we always return an xarray dataset even if empty
+        return _ensure_dataset(
+            odc.stac.load(items, bbox=bbox, resolution=30, chunks={})
+        )
 
 
 @dataclass(slots=True)
 class OpenDataCubeClient(CatalogClient):
     product: str
+
+    @property
+    def actual_transport(self) -> str:
+        return "planetary_computer_stac"
+
+    @property
+    def capability(self) -> str:
+        return "needs_fix"
 
     def _search_items(self, bbox: tuple[float, float, float, float]) -> list:
         catalog = pystac_client.Client.open(
@@ -245,7 +329,7 @@ class OpenDataCubeClient(CatalogClient):
         logger=None,
         run_id: str | None = None,
         mode: str = "offline",
-    ) -> xr.DataArray:
+    ) -> xr.Dataset:
         try:
             items = self._search_items(bbox)
         except Exception as exc:
@@ -254,8 +338,10 @@ class OpenDataCubeClient(CatalogClient):
                 dataset_probe_result(
                     provider=self.provider,
                     source_key=self.source_key,
-                    ok=False,
+                    status="live_failure",
                     detail="catalog probe failed",
+                    capability=self.capability,
+                    actual_transport=self.actual_transport,
                     run_id=run_id,
                     mode=mode,
                     meta={"bbox": bbox, "error": str(exc)},
@@ -264,49 +350,61 @@ class OpenDataCubeClient(CatalogClient):
             raise
 
         if not items:
+            status = "live_failure" if mode == "live_probe" else "live_failure_fallback"
+            detail = (
+                "catalog returned no items"
+                if mode == "live_probe"
+                else "catalog returned no items; fallback required"
+            )
             _log_probe_result(
                 logger,
                 dataset_probe_result(
                     provider=self.provider,
                     source_key=self.source_key,
-                    ok=False,
-                    detail="catalog returned no items; fallback required",
-                    fallback_used=True,
+                    status=status,
+                    detail=detail,
+                    capability=self.capability,
+                    actual_transport=self.actual_transport,
                     run_id=run_id,
                     mode=mode,
                     meta={"bbox": bbox, "item_count": 0},
                 ),
             )
-            _log_event(
-                logger,
-                "warning",
-                event="fallback.activated",
-                component="sources",
-                message="catalog returned no items; fallback required",
-                run_id=run_id,
-                mode=mode,
-                fallback_used=True,
-                meta={
-                    "source_key": self.source_key,
-                    "provider": self.provider,
-                    "bbox": bbox,
-                },
-            )
-            return xr.DataArray()
+            if mode != "live_probe":
+                _log_event(
+                    logger,
+                    "warning",
+                    event="fallback.activated",
+                    component="sources",
+                    message=detail,
+                    run_id=run_id,
+                    mode=mode,
+                    fallback_used=True,
+                    meta={
+                        "source_key": self.source_key,
+                        "provider": self.provider,
+                        "bbox": bbox,
+                    },
+                )
+            return xr.Dataset()
 
         _log_probe_result(
             logger,
             dataset_probe_result(
                 provider=self.provider,
                 source_key=self.source_key,
-                ok=True,
+                status="live_success",
                 detail="catalog probe succeeded",
+                capability=self.capability,
+                actual_transport=self.actual_transport,
                 run_id=run_id,
                 mode=mode,
                 meta={"bbox": bbox, "item_count": len(items)},
             ),
         )
-        return odc.stac.load(items, bbox=bbox, resolution=30, chunks={})
+        return _ensure_dataset(
+            odc.stac.load(items, bbox=bbox, resolution=30, chunks={})
+        )
 
 
 def build_catalog_clients(
