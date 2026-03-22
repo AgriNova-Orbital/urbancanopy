@@ -9,8 +9,10 @@ import {
   REFRESH_INTERVAL_OPTIONS,
   normalizeOperationsMode,
   normalizeOperationsSnapshot,
+  parseOperationsSsePayload,
   refreshIntervalToMs,
   readRefreshIntervalPreference,
+  resolveDisplayedQueueSize,
   type OperationsEvent,
   type OperationsMode,
   type OperationsSnapshot,
@@ -114,6 +116,7 @@ export default function OperationsStatus() {
   const intervalInitializedRef = useRef(false);
   const [snapshot, setSnapshot] = useState<OperationsSnapshot>(EMPTY_SNAPSHOT);
   const [localQueueSize, setLocalQueueSize] = useState(storeRef.current.size());
+  const [hasAuthoritativeRemoteQueue, setHasAuthoritativeRemoteQueue] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState<RefreshIntervalValue>(DEFAULT_REFRESH_INTERVAL);
   const [browserOnline, setBrowserOnline] = useState<boolean>(true);
   const [transport, setTransport] = useState<"sse" | "polling">("polling");
@@ -145,16 +148,15 @@ export default function OperationsStatus() {
       }
 
       const nextSnapshot = normalizeOperationsSnapshot(await response.json());
+      setHasAuthoritativeRemoteQueue(true);
       setSnapshot((previous) => ({
         ...nextSnapshot,
-        queueSize: Math.max(nextSnapshot.queueSize, storeRef.current.size()),
         events: mergeEvents(previous.events, nextSnapshot.events),
       }));
     } catch {
       setSnapshot((previous) => ({
         ...previous,
         mode: browserOnline ? "degraded" : "offline",
-        queueSize: Math.max(previous.queueSize, storeRef.current.size()),
       }));
     }
   }, [browserOnline, syncLocalQueueSize]);
@@ -237,20 +239,33 @@ export default function OperationsStatus() {
     });
 
     source.addEventListener("status", (event) => {
-      const payload = JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
+      const payload = parseOperationsSsePayload((event as MessageEvent<string>).data);
+
+      if (!payload) {
+        return;
+      }
 
       setSnapshot((previous) => ({
         ...previous,
         mode: normalizeOperationsMode(payload.status ?? payload.mode),
-        queueSize: Math.max(previous.queueSize, storeRef.current.size()),
+        queueSize: typeof payload.queueDepth === "number" ? payload.queueDepth : previous.queueSize,
       }));
+
+      if (typeof payload.queueDepth === "number") {
+        setHasAuthoritativeRemoteQueue(true);
+      }
     });
 
     source.addEventListener("event", (event) => {
-      const rawPayload = JSON.parse((event as MessageEvent<string>).data) as unknown;
+      const rawPayload = parseOperationsSsePayload((event as MessageEvent<string>).data);
+
+      if (!rawPayload) {
+        return;
+      }
+
       const payload = normalizeOperationsSnapshot({
         lastUpdatedAt: isRecord(rawPayload) && typeof rawPayload.ts === "string" ? rawPayload.ts : null,
-        queueDepth: storeRef.current.size(),
+        queueDepth: typeof rawPayload.queueDepth === "number" ? rawPayload.queueDepth : snapshot.queueSize,
         events: [rawPayload],
       });
 
@@ -258,9 +273,13 @@ export default function OperationsStatus() {
         ...previous,
         mode: modeFromRealtimePayload(rawPayload, previous.mode),
         lastUpdatedAt: payload.events[0]?.ts ?? previous.lastUpdatedAt,
-        queueSize: Math.max(previous.queueSize, storeRef.current.size()),
+        queueSize: typeof rawPayload.queueDepth === "number" ? rawPayload.queueDepth : previous.queueSize,
         events: mergeEvents(previous.events, payload.events),
       }));
+
+      if (typeof rawPayload.queueDepth === "number") {
+        setHasAuthoritativeRemoteQueue(true);
+      }
     });
 
     source.addEventListener("error", () => {
@@ -289,7 +308,11 @@ export default function OperationsStatus() {
     };
   }, [loadStatus, pollIntervalMs, transport]);
 
-  const displayedQueueSize = Math.max(snapshot.queueSize, localQueueSize);
+  const displayedQueueSize = resolveDisplayedQueueSize(
+    snapshot.queueSize,
+    localQueueSize,
+    hasAuthoritativeRemoteQueue,
+  );
 
   return (
     <section className="rounded-xl border border-slate-700 bg-slate-950/70 p-4">

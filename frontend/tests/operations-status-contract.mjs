@@ -2,7 +2,9 @@ import {
   DEFAULT_REFRESH_INTERVAL,
   REFRESH_INTERVAL_OPTIONS,
   normalizeOperationsSnapshot,
+  parseOperationsSsePayload,
   readRefreshIntervalPreference,
+  resolveDisplayedQueueSize,
   writeRefreshIntervalPreference,
 } from "../lib/operations-status.mjs";
 
@@ -64,6 +66,18 @@ function testStatusNormalization() {
   assert(snapshot.events[0].message === "Connection unstable", "expected normalized event message");
 }
 
+function testAuthoritativeQueueSizeCanDrainToZero() {
+  assert(resolveDisplayedQueueSize(0, 4, true) === 0, "expected authoritative backend queue size to drain to zero");
+  assert(resolveDisplayedQueueSize(2, 4, false) === 4, "expected local queue size before first backend queue update");
+}
+
+function testMalformedSsePayloadIsIgnored() {
+  assert(parseOperationsSsePayload('{"queueDepth":2}').queueDepth === 2, "expected valid SSE payload to parse");
+  assert(parseOperationsSsePayload("not json") === null, "expected malformed SSE payload to return null");
+}
+
 testRefreshIntervalOptions();
 testRefreshIntervalPersistence();
 testStatusNormalization();
+testAuthoritativeQueueSizeCanDrainToZero();
+testMalformedSsePayloadIsIgnored();

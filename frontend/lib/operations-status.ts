@@ -53,6 +53,14 @@ export function refreshIntervalToMs(value: RefreshIntervalValue): number | null 
   return REFRESH_INTERVAL_OPTIONS.find((option) => option.value === value)?.ms ?? null;
 }
 
+export function resolveDisplayedQueueSize(
+  remoteQueueSize: number,
+  localQueueSize: number,
+  hasAuthoritativeRemoteQueue: boolean,
+): number {
+  return hasAuthoritativeRemoteQueue ? remoteQueueSize : localQueueSize;
+}
+
 export function normalizeOperationsMode(value: unknown): OperationsMode {
   if (value === "online" || value === "offline" || value === "degraded") {
     return value;
@@ -97,4 +105,13 @@ export function normalizeOperationsSnapshot(value: unknown): OperationsSnapshot 
     queueSize: typeof value.queueDepth === "number" ? value.queueDepth : 0,
     events,
   };
+}
+
+export function parseOperationsSsePayload(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
