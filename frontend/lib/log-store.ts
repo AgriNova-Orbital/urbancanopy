@@ -43,6 +43,7 @@ function resolveStorage(storage?: StorageLike): StorageLike {
 export interface FrontendLogStore {
   enqueue(event: FrontendLogEvent): FrontendLogEvent[];
   list(): FrontendLogEvent[];
+  remove(count: number): FrontendLogEvent[];
   replace(events: FrontendLogEvent[]): FrontendLogEvent[];
   size(): number;
 }
@@ -80,6 +81,9 @@ export function createLogStore(options?: {
     },
     list() {
       return readQueue();
+    },
+    remove(count: number) {
+      return writeQueue(readQueue().slice(count));
     },
     replace(events: FrontendLogEvent[]) {
       return writeQueue([...events]);

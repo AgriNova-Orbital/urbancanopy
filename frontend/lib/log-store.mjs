@@ -55,6 +55,9 @@ export function createLogStore(options = {}) {
     list() {
       return readQueue();
     },
+    remove(count) {
+      return writeQueue(readQueue().slice(count));
+    },
     replace(events) {
       return writeQueue([...events]);
     },

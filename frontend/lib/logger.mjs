@@ -3,7 +3,7 @@ import { createLogStore } from "./log-store.mjs";
 export function createFrontendLogger(options = {}) {
   const component = options.component ?? "frontend";
   const mode = options.mode ?? "offline";
-  const transport = options.transport ?? (async () => {});
+  const transport = options.transport ?? createBackendTransport({ endpoint: options.endpoint, fetch: options.fetch });
   const store = options.store ?? createLogStore();
 
   let lastStatus = {
@@ -12,6 +12,8 @@ export function createFrontendLogger(options = {}) {
     error: null,
     queueSize: store.size(),
   };
+  let flushRequested = false;
+  let flushPromise = null;
 
   const setStatus = (status) => {
     lastStatus = {
@@ -21,23 +23,46 @@ export function createFrontendLogger(options = {}) {
     };
   };
 
-  const flush = async () => {
-    const queuedEvents = store.list();
+  const processFlushQueue = async () => {
+    do {
+      flushRequested = false;
 
-    if (queuedEvents.length === 0) {
-      setStatus({ state: "idle", error: null });
-      return;
+      const queuedEvents = store.list();
+
+      if (queuedEvents.length === 0) {
+        setStatus({ state: "idle", error: null });
+        return;
+      }
+
+      try {
+        await transport(queuedEvents);
+        store.remove(queuedEvents.length);
+        setStatus({ state: "success", syncedAt: new Date().toISOString(), error: null });
+      } catch (error) {
+        setStatus({
+          state: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+    } while (flushRequested);
+  };
+
+  const flush = async () => {
+    flushRequested = true;
+
+    if (!flushPromise) {
+      flushPromise = Promise.resolve()
+        .then(processFlushQueue)
+        .finally(() => {
+          flushPromise = null;
+        });
     }
 
-    try {
-      await transport(queuedEvents);
-      store.replace([]);
-      setStatus({ state: "success", syncedAt: new Date().toISOString(), error: null });
-    } catch (error) {
-      setStatus({
-        state: "error",
-        error: error instanceof Error ? error.message : String(error),
-      });
+    await flushPromise;
+
+    if (flushRequested && !flushPromise) {
+      await flush();
     }
   };
 
@@ -84,5 +109,31 @@ export function createFrontendLogger(options = {}) {
     sync() {
       return flush();
     },
+  };
+}
+
+function createBackendTransport(options = {}) {
+  const endpoint = options.endpoint ?? "/api/logs";
+  const hasCustomFetch = typeof options.fetch === "function";
+  const fetchImpl = options.fetch ?? (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined);
+
+  return async (events) => {
+    if (!fetchImpl) {
+      throw new Error("backend transport unavailable");
+    }
+
+    if (endpoint.startsWith("/") && typeof window === "undefined" && !hasCustomFetch) {
+      throw new Error("backend transport unavailable");
+    }
+
+    const response = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`backend transport failed: ${response.status}`);
+    }
   };
 }
