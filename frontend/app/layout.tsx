@@ -1,4 +1,5 @@
 import "./globals.css";
+import "maplibre-gl/dist/maplibre-gl.css";
 
 import FrontendLogger from "../components/FrontendLogger";
 
