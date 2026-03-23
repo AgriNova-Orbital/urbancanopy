@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import Map, { NavigationControl, Source, Layer, FillLayer, MapRef } from "react-map-gl";
+import Map, { NavigationControl, Source, Layer, FillLayer, MapRef } from "react-map-gl/maplibre";
 import bbox from "@turf/bbox";
-import "mapbox-gl/dist/mapbox-gl.css";
+import "maplibre-gl/dist/maplibre-gl.css";
 
 import { reportFrontendRuntimeIssue } from "./FrontendLogger";
 
@@ -24,9 +24,51 @@ const priorityLayerStyle: FillLayer = {
   }
 };
 
+const streetStyle = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "&copy; OpenStreetMap Contributors",
+    },
+  },
+  layers: [
+    {
+      id: "osm-tiles",
+      type: "raster",
+      source: "osm",
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+};
+
+const satelliteStyle = {
+  version: 8,
+  sources: {
+    esri: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "&copy; Esri",
+    },
+  },
+  layers: [
+    {
+      id: "satellite-tiles",
+      type: "raster",
+      source: "esri",
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+};
+
 export default function MapViewer() {
-  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
   const [geoData, setGeoData] = useState<any>(null);
+  const [mapStyleType, setMapStyleType] = useState<"streets" | "satellite">("streets");
   const mapRef = useRef<MapRef>(null);
 
   useEffect(() => {
@@ -53,32 +95,27 @@ export default function MapViewer() {
       });
   }, []);
 
-  if (!mapboxToken) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-slate-900 text-white">
-        <div className="bg-red-900/50 border border-red-500 p-6 rounded-lg max-w-md text-center">
-          <h2 className="text-xl font-bold mb-2">Missing Mapbox Token</h2>
-          <p>Please ensure <code className="bg-slate-800 px-1 rounded">NEXT_PUBLIC_MAPBOX_TOKEN</code> is set in your <code className="bg-slate-800 px-1 rounded">.env.local</code> file to view the satellite map.</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="absolute inset-0 w-screen h-screen">
+      <button
+        onClick={() => setMapStyleType(prev => prev === "streets" ? "satellite" : "streets")}
+        className="absolute bottom-6 left-6 z-20 bg-slate-900 text-white px-3 py-1 rounded"
+      >
+        Toggle Style ({mapStyleType})
+      </button>
+
       <Map
         ref={mapRef}
-        mapboxAccessToken={mapboxToken}
         initialViewState={{
           longitude: 121.5, // Default Taipei
           latitude: 25.03,
           zoom: 11
         }}
-        mapStyle="mapbox://styles/mapbox/dark-v11"
+        mapStyle={mapStyleType === "streets" ? (streetStyle as any) : (satelliteStyle as any)}
         style={{ width: "100%", height: "100%" }}
         onError={(event) => {
-          reportFrontendRuntimeIssue("error", "ui.map.error", "Mapbox runtime error", {
-            error: event.error?.message ?? "Unknown Mapbox error",
+          reportFrontendRuntimeIssue("error", "ui.map.error", "MapLibre runtime error", {
+            error: event.error?.message ?? "Unknown MapLibre error",
           });
         }}
       >
