@@ -1,18 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Map, { NavigationControl, Source, Layer, type FillLayer, type MapRef, type MapLayerMouseEvent } from "react-map-gl/maplibre";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Map, { NavigationControl, Source, Layer, type MapRef, type MapLayerMouseEvent } from "react-map-gl/maplibre";
 import bbox from "@turf/bbox";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { getHighestPriorityZone, loadPriorityZones, type PriorityZonesCollection } from "../lib/artifacts";
-import { reportFrontendRuntimeError } from "../lib/runtime-error-dedupe";
+import { reportFrontendRuntimeIssue } from "./FrontendLogger";
+import type { FillLayerSpecification, StyleSpecification } from "maplibre-gl";
 
 type MapViewerProps = {
   selectedZoneId: string | null;
   onZoneSelect: (zoneId: string | null) => void;
 };
 
-const streetStyle = {
+const streetStyle: StyleSpecification = {
   version: 8,
   sources: {
     osm: {
@@ -33,7 +34,7 @@ const streetStyle = {
   ],
 };
 
-const satelliteStyle = {
+const satelliteStyle: StyleSpecification = {
   version: 8,
   sources: {
     esri: {
@@ -54,7 +55,7 @@ const satelliteStyle = {
   ],
 };
 
-const priorityLayerStyle: FillLayer = {
+const priorityLayerStyle: FillLayerSpecification = {
   id: "priority-zones-fill",
   type: "fill",
   source: "priority-data",
@@ -76,7 +77,7 @@ const priorityLayerStyle: FillLayer = {
   },
 };
 
-const selectedLayerStyle: FillLayer = {
+const selectedLayerStyle: FillLayerSpecification = {
   id: "priority-zones-selected",
   type: "fill",
   source: "priority-data",
@@ -125,7 +126,7 @@ export default function MapViewer({ selectedZoneId, onZoneSelect }: MapViewerPro
         }
       })
       .catch((error) => {
-        reportFrontendRuntimeError("Failed to load priority zones", error);
+        reportFrontendRuntimeIssue("error", "ui.map.error", "Failed to load priority zones", { error: String(error) });
         if (active) {
           setMapError("Priority zones could not be loaded.");
         }
@@ -202,9 +203,11 @@ export default function MapViewer({ selectedZoneId, onZoneSelect }: MapViewerPro
           setMapError(null);
         }}
         onError={(event) => {
-          reportFrontendRuntimeError(
+          reportFrontendRuntimeIssue(
+            "error",
+            "ui.map.error",
             "Map initialization failed",
-            event.error,
+            { error: event.error?.message ?? "Unknown MapLibre error" },
           );
           setMapError(
             event.error?.message ?? "Interactive map failed to initialize.",

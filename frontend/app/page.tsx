@@ -2,8 +2,12 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import OperationsStatus from "../components/OperationsStatus";
 import Sidebar from "../components/Sidebar";
+
+const OperationsStatus = dynamic(
+  () => import("../components/OperationsStatus"),
+  { ssr: false },
+);
 
 const MapViewer = dynamic(() => import("../components/MapViewer"), {
   ssr: false,

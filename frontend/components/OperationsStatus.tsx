@@ -120,6 +120,7 @@ export default function OperationsStatus() {
   const [refreshInterval, setRefreshInterval] = useState<RefreshIntervalValue>(DEFAULT_REFRESH_INTERVAL);
   const [browserOnline, setBrowserOnline] = useState<boolean>(true);
   const [transport, setTransport] = useState<"sse" | "polling">("polling");
+  const [clientReady, setClientReady] = useState(false);
 
   const ensureLogger = useCallback(() => {
     if (!loggerRef.current) {
