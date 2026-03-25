@@ -3,6 +3,7 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import Sidebar from "../components/Sidebar";
+import RightPanel from "../components/RightPanel";
 
 const OperationsStatus = dynamic(
   () => import("../components/OperationsStatus"),
@@ -25,6 +26,7 @@ export default function Home() {
     <main className="relative flex h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_rgba(15,23,42,0.96)_35%,_rgba(2,6,23,1)_100%)] text-slate-50">
       <MapViewer selectedZoneId={selectedZoneId} onZoneSelect={setSelectedZoneId} />
       <Sidebar selectedZoneId={selectedZoneId} />
+      <RightPanel />
       <OperationsStatus />
     </main>
   );
