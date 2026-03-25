@@ -20,7 +20,7 @@ const streetStyle: StyleSpecification = {
       type: "raster",
       tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
       tileSize: 256,
-      attribution: "&copy; OpenStreetMap Contributors",
+      attribution: "\u00a9 OpenStreetMap Contributors",
     },
   },
   layers: [
@@ -41,7 +41,7 @@ const satelliteStyle: StyleSpecification = {
       type: "raster",
       tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
       tileSize: 256,
-      attribution: "&copy; Esri",
+      attribution: "\u00a9 Esri",
     },
   },
   layers: [
